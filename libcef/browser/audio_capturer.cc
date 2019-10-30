@@ -7,8 +7,10 @@
 #include "libcef/browser/browser_host_impl.h"
 #include "libcef/browser/thread_util.h"
 
+#include "base/task/post_task.h"
 #include "components/mirroring/service/captured_audio_input.h"
 #include "content/public/browser/audio_loopback_stream_creator.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "media/audio/audio_input_device.h"
 
 namespace {
@@ -220,7 +222,6 @@ CefAudioCapturer::~CefAudioCapturer() {
 
 void CefAudioCapturer::Start() {
   DCHECK(thread_checker_.CalledOnValidThread());
-
   audio_input_device_->Start();
 }
 
@@ -235,17 +236,10 @@ void CefAudioCapturer::Stop() {
 }
 
 void CefAudioCapturer::OnCaptureStarted() {
-  if (!CEF_CURRENTLY_ON_UIT()) {
-    CEF_POST_TASK(CEF_UIT, base::BindOnce(&CefAudioCapturer::OnCaptureStarted,
-                                          base::Unretained(this)));
-    return;
-  }
-
-  stream_stopped_ = false;
-  audio_handler_->OnAudioStreamStarted(
-      browser_, audio_stream_id_, params_.channels(),
-      TranslateChannelLayout(params_.channel_layout()), params_.sample_rate(),
-      params_.frames_per_buffer());
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
+      base::BindOnce(&CefAudioCapturer::handleCaptureStartedOnUIThread,
+                     base::Unretained(this)));
 }
 
 void CefAudioCapturer::Capture(const media::AudioBus* source,
@@ -255,13 +249,29 @@ void CefAudioCapturer::Capture(const media::AudioBus* source,
   if (stream_stopped_)
     return;
 
-  if (!CEF_CURRENTLY_ON_UIT()) {
-    CEF_POST_TASK(
-        CEF_UIT,
-        base::BindOnce(&CefAudioCapturer::Capture, base::Unretained(this),
-                       source, audio_capture_time, volume, key_pressed));
-    return;
-  }
+  std::unique_ptr<media::AudioBus> copy(media::AudioBus::Create(params_));
+  source->CopyTo(copy.get());
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
+      base::BindOnce(&CefAudioCapturer::handleCaptureOnUIThread,
+                     base::Unretained(this), std::move(copy),
+                     audio_capture_time));
+}
+
+void CefAudioCapturer::handleCaptureStartedOnUIThread() {
+  DCHECK(thread_checker_.CalledOnValidThread());
+
+  stream_stopped_ = false;
+  audio_handler_->OnAudioStreamStarted(
+      browser_, audio_stream_id_, params_.channels(),
+      TranslateChannelLayout(params_.channel_layout()), params_.sample_rate(),
+      params_.frames_per_buffer());
+}
+
+void CefAudioCapturer::handleCaptureOnUIThread(
+    std::unique_ptr<media::AudioBus> source,
+    base::TimeTicks audio_capture_time) {
+  DCHECK(thread_checker_.CalledOnValidThread());
 
   const int channels = source->channels();
   std::array<const float*, media::CHANNELS_MAX> data;
