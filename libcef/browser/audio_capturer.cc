@@ -217,7 +217,13 @@ CefAudioCapturer::CefAudioCapturer(const CefAudioParameters& params,
 
 CefAudioCapturer::~CefAudioCapturer() {
   DCHECK(thread_checker_.CalledOnValidThread());
+
   Stop();
+
+  browser_ = nullptr;
+  audio_handler_ = nullptr;
+  audio_input_device_ = nullptr;
+  audio_stream_creator_.reset();
 }
 
 void CefAudioCapturer::Start() {
