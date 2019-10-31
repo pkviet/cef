@@ -43,7 +43,6 @@
 
 ///
 // Implement this interface to handle audio events
-// All methods will be called on the UI thread
 ///
 /*--cef(source=client)--*/
 class CefAudioHandler : public virtual CefBaseRefCounted {
@@ -51,9 +50,9 @@ class CefAudioHandler : public virtual CefBaseRefCounted {
   typedef cef_channel_layout_t ChannelLayout;
 
   ///
-  // Called to allow to setup the format of the audio stream
+  // Called on the UI thread to allow to setup the format of the audio stream
   // produced. Return true if the audio parameters were provided otherwise
-  // no stream(s) will be produced.
+  // no stream will get produced.
   // This method will be called only a single time after browser
   // creation.
   ///
@@ -62,14 +61,15 @@ class CefAudioHandler : public virtual CefBaseRefCounted {
                                   CefAudioParameters& params) = 0;
 
   ///
-  // Called when the stream identified by |audio_stream_id| has started.
-  // |audio_stream_id| will uniquely identify the stream across all future
-  // CefAudioHandler callbacks. OnAudioSteamStopped will always be called after
-  // OnAudioStreamStarted; both methods may be called multiple times for the
-  // same stream. |channels| is the number of channels, |channel_layout| is the
-  // layout of the channels and |sample_rate| is the stream sample rate.
-  // |frames_per_buffer| is the maximum number of frames that will occur in the
-  // PCM packet passed to OnAudioStreamPacket.
+  // Called on a new thread created for this audio stream when the stream
+  // identified by |audio_stream_id| has started. |audio_stream_id| will
+  // uniquely identify the stream across all future CefAudioHandler callbacks.
+  // OnAudioSteamStopped will always be called after OnAudioStreamStarted; both
+  // methods may be called multiple times for the same stream. |channels| is the
+  // number of channels, |channel_layout| is the layout of the channels and
+  // |sample_rate| is the stream sample rate. |frames_per_buffer| is the maximum
+  // number of frames that will occur in the PCM packet passed to
+  // OnAudioStreamPacket.
   ///
   /*--cef()--*/
   virtual void OnAudioStreamStarted(CefRefPtr<CefBrowser> browser,
@@ -80,14 +80,14 @@ class CefAudioHandler : public virtual CefBaseRefCounted {
                                     int frames_per_buffer) = 0;
 
   ///
-  // Called when a PCM packet is received for the stream identified by
-  // |audio_stream_id|. |data| is an array representing the raw PCM data as a
-  // floating point type, i.e. 4-byte value(s). |frames| is the number of frames
-  // in the PCM packet. |pts| is the presentation timestamp (in milliseconds
-  // since the Unix Epoch) and represents the time at which the decompressed
-  // packet should be presented to the user. Based on |frames| and the
-  // |channel_layout| value passed to OnAudioStreamStarted you can calculate the
-  // size of the |data| array in bytes.
+  // Called on the audio stream thread when a PCM packet is received for the
+  // stream identified by |audio_stream_id|. |data| is an array representing the
+  // raw PCM data as a floating point type, i.e. 4-byte value(s). |frames| is
+  // the number of frames in the PCM packet. |pts| is the presentation timestamp
+  // (in milliseconds since the Unix Epoch) and represents the time at which the
+  // decompressed packet should be presented to the user. Based on |frames| and
+  // the |channel_layout| value passed to OnAudioStreamStarted you can calculate
+  // the size of the |data| array in bytes.
   ///
   /*--cef()--*/
   virtual void OnAudioStreamPacket(CefRefPtr<CefBrowser> browser,
@@ -97,9 +97,10 @@ class CefAudioHandler : public virtual CefBaseRefCounted {
                                    int64 pts) = 0;
 
   ///
-  // Called when the stream identified by |audio_stream_id| has stopped.
-  // OnAudioSteamStopped will always be called after OnAudioStreamStarted; both
-  // methods may be called multiple times for the same stream.
+  // Called on the UI thread when the stream identified by |audio_stream_id| has
+  // stopped. OnAudioSteamStopped will always be called after
+  // OnAudioStreamStarted; both methods may be called multiple times for the
+  // same stream.
   ///
   /*--cef()--*/
   virtual void OnAudioStreamStopped(CefRefPtr<CefBrowser> browser,
