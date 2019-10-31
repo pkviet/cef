@@ -14,7 +14,7 @@ namespace {
 
 const int kNumChannels = 2;
 const int kSampleRate = 44100;
-const int kFramesPerBuffer = 1024;
+const int kFramesPerBuffer = 882;  // 10ms
 const CefAudioHandler::ChannelLayout kChannelLayout = CEF_CHANNEL_LAYOUT_STEREO;
 
 const char kTestUrl[] = "http://tests/audiooutputtest";
