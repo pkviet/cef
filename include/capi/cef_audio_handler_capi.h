@@ -33,7 +33,7 @@
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=dcae93a1af5c2a7b1b198b77126ffa69cb08fd11$
+// $hash=68275d299625f50e62908fcb129451afb03b9b8c$
 //
 
 #ifndef CEF_INCLUDE_CAPI_CEF_AUDIO_HANDLER_CAPI_H_
@@ -58,7 +58,10 @@ typedef struct _cef_audio_handler_t {
   cef_base_ref_counted_t base;
 
   ///
-  // Called to configure the stream's format.
+  // Called to allow to setup the format of the audio stream produced. Return
+  // true (1) if the audio parameters were provided otherwise no stream(s) will
+  // be produced. This function will be called only a single time after browser
+  // creation.
   ///
   int(CEF_CALLBACK* get_audio_parameters)(struct _cef_audio_handler_t* self,
                                           struct _cef_browser_t* browser,

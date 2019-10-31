@@ -179,7 +179,7 @@ void StreamCreatorHelper(
 }
 }  // namespace
 
-int CefAudioCapturer::audio_stream_id = 0;
+int CefAudioCapturer::next_audio_stream_id_ = 0;
 
 CefAudioCapturer::CefAudioCapturer(const CefAudioParameters& params,
                                    CefRefPtr<CefBrowserHostImpl> browser,
@@ -190,7 +190,7 @@ CefAudioCapturer::CefAudioCapturer(const CefAudioParameters& params,
               params.frames_per_buffer),
       browser_(browser),
       audio_handler_(audio_handler),
-      audio_stream_id_(++audio_stream_id),
+      audio_stream_id_(++next_audio_stream_id_),
       audio_stream_creator_(content::AudioLoopbackStreamCreator::
                                 CreateInProcessAudioLoopbackStreamCreator()) {
   static_assert(
@@ -238,7 +238,7 @@ void CefAudioCapturer::Stop() {
 void CefAudioCapturer::OnCaptureStarted() {
   base::PostTaskWithTraits(
       FROM_HERE, {content::BrowserThread::UI},
-      base::BindOnce(&CefAudioCapturer::handleCaptureStartedOnUIThread,
+      base::BindOnce(&CefAudioCapturer::HandleCaptureStartedOnUIThread,
                      base::Unretained(this)));
 }
 
@@ -253,12 +253,12 @@ void CefAudioCapturer::Capture(const media::AudioBus* source,
   source->CopyTo(copy.get());
   base::PostTaskWithTraits(
       FROM_HERE, {content::BrowserThread::UI},
-      base::BindOnce(&CefAudioCapturer::handleCaptureOnUIThread,
+      base::BindOnce(&CefAudioCapturer::HandleCaptureOnUIThread,
                      base::Unretained(this), std::move(copy),
                      audio_capture_time));
 }
 
-void CefAudioCapturer::handleCaptureStartedOnUIThread() {
+void CefAudioCapturer::HandleCaptureStartedOnUIThread() {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   stream_stopped_ = false;
@@ -268,7 +268,7 @@ void CefAudioCapturer::handleCaptureStartedOnUIThread() {
       params_.frames_per_buffer());
 }
 
-void CefAudioCapturer::handleCaptureOnUIThread(
+void CefAudioCapturer::HandleCaptureOnUIThread(
     std::unique_ptr<media::AudioBus> source,
     base::TimeTicks audio_capture_time) {
   DCHECK(thread_checker_.CalledOnValidThread());

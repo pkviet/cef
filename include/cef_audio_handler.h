@@ -51,7 +51,11 @@ class CefAudioHandler : public virtual CefBaseRefCounted {
   typedef cef_channel_layout_t ChannelLayout;
 
   ///
-  // Called to configure the stream's format.
+  // Called to allow to setup the format of the audio stream
+  // produced. Return true if the audio parameters were provided otherwise
+  // no stream(s) will be produced.
+  // This method will be called only a single time after browser
+  // creation.
   ///
   /*--cef()--*/
   virtual bool GetAudioParameters(CefRefPtr<CefBrowser> browser,
