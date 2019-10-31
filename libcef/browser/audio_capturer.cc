@@ -5,12 +5,9 @@
 
 #include "libcef/browser/audio_capturer.h"
 #include "libcef/browser/browser_host_impl.h"
-#include "libcef/browser/thread_util.h"
 
-#include "base/task/post_task.h"
 #include "components/mirroring/service/captured_audio_input.h"
 #include "content/public/browser/audio_loopback_stream_creator.h"
-#include "content/public/browser/browser_task_traits.h"
 #include "media/audio/audio_input_device.h"
 
 namespace {
@@ -242,31 +239,6 @@ void CefAudioCapturer::Stop() {
 }
 
 void CefAudioCapturer::OnCaptureStarted() {
-  base::PostTaskWithTraits(
-      FROM_HERE, {content::BrowserThread::UI},
-      base::BindOnce(&CefAudioCapturer::HandleCaptureStartedOnUIThread,
-                     base::Unretained(this)));
-}
-
-void CefAudioCapturer::Capture(const media::AudioBus* source,
-                               base::TimeTicks audio_capture_time,
-                               double volume,
-                               bool key_pressed) {
-  if (stream_stopped_)
-    return;
-
-  std::unique_ptr<media::AudioBus> copy(media::AudioBus::Create(params_));
-  source->CopyTo(copy.get());
-  base::PostTaskWithTraits(
-      FROM_HERE, {content::BrowserThread::UI},
-      base::BindOnce(&CefAudioCapturer::HandleCaptureOnUIThread,
-                     base::Unretained(this), std::move(copy),
-                     audio_capture_time));
-}
-
-void CefAudioCapturer::HandleCaptureStartedOnUIThread() {
-  DCHECK(thread_checker_.CalledOnValidThread());
-
   stream_stopped_ = false;
   audio_handler_->OnAudioStreamStarted(
       browser_, audio_stream_id_, params_.channels(),
@@ -274,10 +246,12 @@ void CefAudioCapturer::HandleCaptureStartedOnUIThread() {
       params_.frames_per_buffer());
 }
 
-void CefAudioCapturer::HandleCaptureOnUIThread(
-    std::unique_ptr<media::AudioBus> source,
-    base::TimeTicks audio_capture_time) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+void CefAudioCapturer::Capture(const media::AudioBus* source,
+                               base::TimeTicks audio_capture_time,
+                               double /*volume*/,
+                               bool /*key_pressed*/) {
+  if (stream_stopped_)
+    return;
 
   const int channels = source->channels();
   std::array<const float*, media::CHANNELS_MAX> data;

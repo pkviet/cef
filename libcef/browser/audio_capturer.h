@@ -42,10 +42,6 @@ class CefAudioCapturer : public media::AudioCapturerSource::CaptureCallback {
   void OnCaptureError(const std::string& /* message */) override {}
   void OnCaptureMuted(bool is_muted) override {}
 
-  void HandleCaptureStartedOnUIThread();
-  void HandleCaptureOnUIThread(std::unique_ptr<media::AudioBus> source,
-                               base::TimeTicks audio_capture_time);
-
   media::AudioParameters params_;
   CefRefPtr<CefBrowserHostImpl> browser_;
   CefRefPtr<CefAudioHandler> audio_handler_;

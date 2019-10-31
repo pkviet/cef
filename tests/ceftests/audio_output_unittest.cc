@@ -841,6 +841,7 @@ class AudioOutputTestHandler : public TestHandler, public CefAudioHandler {
 
   bool GetAudioParameters(CefRefPtr<CefBrowser> browser,
                           CefAudioParameters& params) override {
+    EXPECT_TRUE(CefCurrentlyOn(TID_UI));
     params.channel_layout = kChannelLayout;
     params.sample_rate = kSampleRate;
     params.frames_per_buffer = kFramesPerBuffer;
@@ -855,7 +856,6 @@ class AudioOutputTestHandler : public TestHandler, public CefAudioHandler {
                             int frames_per_buffer) override {
     EXPECT_FALSE(got_on_audio_stream_started_);
     EXPECT_TRUE(GetBrowser()->IsSame(browser));
-    EXPECT_TRUE(CefCurrentlyOn(TID_UI));
     EXPECT_EQ(channels, kNumChannels);
     EXPECT_EQ(channel_layout, kChannelLayout);
     EXPECT_EQ(sample_rate, kSampleRate);
@@ -872,7 +872,6 @@ class AudioOutputTestHandler : public TestHandler, public CefAudioHandler {
     if (!got_on_audio_stream_packet_.isSet()) {
       EXPECT_TRUE(got_on_audio_stream_started_);
       EXPECT_EQ(audio_stream_id_, audio_stream_id);
-      EXPECT_TRUE(CefCurrentlyOn(TID_UI));
       EXPECT_EQ(frames, kFramesPerBuffer);
 
       browser->GetMainFrame()->ExecuteJavaScript(
