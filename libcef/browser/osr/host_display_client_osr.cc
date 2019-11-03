@@ -14,6 +14,7 @@
 #include "components/viz/common/resources/resource_sizes.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 #include "services/viz/privileged/mojom/compositing/layered_window_updater.mojom.h"
+#include "services/viz/privileged/mojom/compositing/external_renderer_updater.mojom.h"
 #include "skia/ext/platform_canvas.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkRect.h"
@@ -23,6 +24,58 @@
 #if defined(OS_WIN)
 #include "skia/ext/skia_utils_win.h"
 #endif
+
+class CefExternalRendererUpdaterOSR : public viz::mojom::ExternalRendererUpdater {
+ public:
+  CefExternalRendererUpdaterOSR(CefRenderWidgetHostViewOSR* const view,
+                                viz::mojom::ExternalRendererUpdaterRequest request);
+  ~CefExternalRendererUpdaterOSR() override;
+
+  // viz::mojom::ExternalRendererUpdater implementation.
+  void OnGpuBufferAllocated(gfx::GpuMemoryBufferHandle handle, uint32_t id) override;
+  void OnGpuBufferFreed(OnGpuBufferFreedCallback callback) override;
+  void OnAfterFlip(uint32_t id, const gfx::Rect& damage_rect) override;
+
+ private:
+  static const int kMaxSurfaces = 3;
+
+  CefRenderWidgetHostViewOSR* const view_;
+  mojo::Binding<viz::mojom::ExternalRendererUpdater> binding_;
+#ifdef OS_WIN
+  base::win::ScopedHandle textureHandle_[kMaxSurfaces];
+#endif
+
+  DISALLOW_COPY_AND_ASSIGN(CefExternalRendererUpdaterOSR);
+};
+
+CefExternalRendererUpdaterOSR::CefExternalRendererUpdaterOSR(
+    CefRenderWidgetHostViewOSR* const view,
+    viz::mojom::ExternalRendererUpdaterRequest request)
+    : view_(view), binding_(this, std::move(request)) {}
+
+CefExternalRendererUpdaterOSR::~CefExternalRendererUpdaterOSR() = default;
+
+void CefExternalRendererUpdaterOSR::OnGpuBufferAllocated(gfx::GpuMemoryBufferHandle buffer, uint32_t id) {
+#ifdef OS_WIN
+    textureHandle_[id].Set(buffer.dxgi_handle.GetHandle());
+#endif
+}
+
+void CefExternalRendererUpdaterOSR::OnGpuBufferFreed(OnGpuBufferFreedCallback callback) {
+#ifdef OS_WIN
+    for (int i = 0; i < kMaxSurfaces; i++)
+        textureHandle_[i].Set(nullptr);
+#endif
+    std::move(callback).Run();
+}
+
+void CefExternalRendererUpdaterOSR::OnAfterFlip(uint32_t id, const gfx::Rect& damage_rect) {
+#ifdef OS_WIN
+    view_->OnAcceleratedPaint(damage_rect, textureHandle_[id].Get());
+#else
+    view_->OnAcceleratedPaint(damage_Rect, nullptr);
+#endif
+}
 
 class CefLayeredWindowUpdaterOSR : public viz::mojom::LayeredWindowUpdater {
  public:
@@ -99,8 +152,9 @@ void CefLayeredWindowUpdaterOSR::Draw(const gfx::Rect& damage_rect,
 
 CefHostDisplayClientOSR::CefHostDisplayClientOSR(
     CefRenderWidgetHostViewOSR* const view,
-    gfx::AcceleratedWidget widget)
-    : viz::HostDisplayClient(widget), view_(view) {}
+    gfx::AcceleratedWidget widget,
+    bool use_proxy_output)
+    : viz::HostDisplayClient(widget), view_(view), use_proxy_output_(use_proxy_output) {}
 
 CefHostDisplayClientOSR::~CefHostDisplayClientOSR() {}
 
@@ -123,7 +177,7 @@ gfx::Size CefHostDisplayClientOSR::GetPixelSize() const {
 
 void CefHostDisplayClientOSR::UseProxyOutputDevice(
     UseProxyOutputDeviceCallback callback) {
-  std::move(callback).Run(true);
+  std::move(callback).Run(use_proxy_output_);
 }
 
 void CefHostDisplayClientOSR::CreateLayeredWindowUpdater(
@@ -131,4 +185,10 @@ void CefHostDisplayClientOSR::CreateLayeredWindowUpdater(
   layered_window_updater_ =
       std::make_unique<CefLayeredWindowUpdaterOSR>(view_, std::move(request));
   layered_window_updater_->SetActive(active_);
+}
+
+void CefHostDisplayClientOSR::CreateExternalRendererUpdater(
+    viz::mojom::ExternalRendererUpdaterRequest request) {
+  external_renderer_updater_ =
+      std::make_unique<CefExternalRendererUpdaterOSR>(view_, std::move(request));
 }

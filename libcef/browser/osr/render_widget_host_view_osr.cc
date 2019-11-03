@@ -161,6 +161,7 @@ CefRenderWidgetHostViewOSR::CefRenderWidgetHostViewOSR(
     : content::RenderWidgetHostViewBase(widget),
       background_color_(background_color),
       frame_rate_threshold_us_(0),
+      use_shared_texture_(use_shared_texture),
       hold_resize_(false),
       pending_resize_(false),
       pending_resize_force_(false),
@@ -215,6 +216,8 @@ CefRenderWidgetHostViewOSR::CefRenderWidgetHostViewOSR(
   ui::ContextFactoryPrivate* context_factory_private =
       factory->GetContextFactoryPrivate();
 
+  use_proxy_output_ = use_shared_texture_ || content::GpuDataManagerImpl::GetInstance()->IsGpuCompositingDisabled();
+
   // Matching the attributes from RecyclableCompositorMac.
   compositor_.reset(new ui::Compositor(
       context_factory_private->AllocateFrameSinkId(),
@@ -248,7 +251,7 @@ CefRenderWidgetHostViewOSR::CefRenderWidgetHostViewOSR(
     Show();
   }
 
-  if (!content::GpuDataManagerImpl::GetInstance()->IsGpuCompositingDisabled()) {
+  if (!content::GpuDataManagerImpl::GetInstance()->IsGpuCompositingDisabled() && !use_shared_texture_) {
     video_consumer_.reset(new CefVideoConsumerOSR(this));
     video_consumer_->SetActive(true);
     video_consumer_->SetFrameRate(
@@ -856,7 +859,7 @@ void CefRenderWidgetHostViewOSR::OnNeedsExternalBeginFrames(
 std::unique_ptr<viz::HostDisplayClient>
 CefRenderWidgetHostViewOSR::CreateHostDisplayClient() {
   host_display_client_ =
-      new CefHostDisplayClientOSR(this, gfx::kNullAcceleratedWidget);
+      new CefHostDisplayClientOSR(this, gfx::kNullAcceleratedWidget, use_proxy_output_);
   host_display_client_->SetActive(true);
   return base::WrapUnique(host_display_client_);
 }
@@ -1305,6 +1308,27 @@ void CefRenderWidgetHostViewOSR::OnPaint(const gfx::Rect& damage_rect,
   ReleaseResize();
 }
 
+void CefRenderWidgetHostViewOSR::OnAcceleratedPaint(const gfx::Rect& damage_rect, void *shared_texture) {
+  if (!shared_texture || !use_shared_texture_) {
+    return;
+  }
+
+  CefRefPtr<CefRenderHandler> handler =
+      browser_impl_->client()->GetRenderHandler();
+  CHECK(handler);
+
+  gfx::Rect rect_in_pixels(GetViewBounds());
+  rect_in_pixels.Intersect(damage_rect);
+
+  CefRenderHandler::RectList rcList;
+  rcList.push_back(CefRect(rect_in_pixels.x(), rect_in_pixels.y(),
+                           rect_in_pixels.width(), rect_in_pixels.height()));
+
+  handler->OnAcceleratedPaint(browser_impl_.get(),
+                              IsPopupWidget() ? PET_POPUP : PET_VIEW, rcList,
+                              shared_texture);
+}
+
 ui::Layer* CefRenderWidgetHostViewOSR::GetRootLayer() const {
   return root_layer_.get();
 }
@@ -1497,7 +1521,8 @@ void CefRenderWidgetHostViewOSR::OnGuestViewFrameSwapped(
 
 void CefRenderWidgetHostViewOSR::InvalidateInternal(
     const gfx::Rect& bounds_in_pixels) {
-  if (video_consumer_) {
+  if (use_shared_texture_) {
+  } else if (video_consumer_) {
     video_consumer_->SizeChanged();
   } else {
     OnPaint(bounds_in_pixels, host_display_client_->GetPixelSize(),

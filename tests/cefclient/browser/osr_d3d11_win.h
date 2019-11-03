@@ -165,7 +165,7 @@ class SwapChain {
 
 class Texture2D {
  public:
-  Texture2D(ID3D11Texture2D* tex, ID3D11ShaderResourceView* srv);
+  Texture2D(ID3D11Texture2D* tex, ID3D11ShaderResourceView* srv, void *share_handle, HANDLE nthandlegrep);
 
   void bind(std::shared_ptr<Context> const& ctx);
   void unbind();
@@ -190,6 +190,7 @@ class Texture2D {
   const std::shared_ptr<ID3D11ShaderResourceView> srv_;
   std::shared_ptr<IDXGIKeyedMutex> keyed_mutex_;
   std::shared_ptr<Context> ctx_;
+  std::shared_ptr<void> nthandle_;
 
   DISALLOW_COPY_AND_ASSIGN(Texture2D);
 };
