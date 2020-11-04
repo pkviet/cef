@@ -214,6 +214,7 @@ CefRenderWidgetHostViewOSR::CefRenderWidgetHostViewOSR(
     CefRenderWidgetHostViewOSR* parent_host_view)
     : content::RenderWidgetHostViewBase(widget),
       background_color_(background_color),
+	  use_shared_texture_(use_shared_texture),
       render_widget_host_(content::RenderWidgetHostImpl::From(widget)),
       has_parent_(parent_host_view != nullptr),
       parent_host_view_(parent_host_view),
@@ -252,6 +253,11 @@ CefRenderWidgetHostViewOSR::CefRenderWidgetHostViewOSR(
 
   auto context_factory = content::GetContextFactory();
 
+  bool gpu_compositing_disabled =
+      content::GpuDataManagerImpl::GetInstance()->IsGpuCompositingDisabled();
+
+  use_proxy_output_ = use_shared_texture_ || gpu_compositing_disabled;
+  
   // Matching the attributes from RecyclableCompositorMac.
   compositor_.reset(new ui::Compositor(
       context_factory->AllocateFrameSinkId(), context_factory,
@@ -261,7 +267,10 @@ CefRenderWidgetHostViewOSR::CefRenderWidgetHostViewOSR(
 
   compositor_->SetDelegate(this);
   compositor_->SetRootLayer(root_layer_.get());
-  compositor_->AddChildFrameSink(GetFrameSinkId());
+  compositor_->AddChildFrameSink(GetFrameSinkId());  
+  if (use_shared_texture_) {
+    compositor_->SetBackgroundColor(background_color_);
+  }
 
   content::RenderWidgetHostImpl* render_widget_host_impl =
       content::RenderWidgetHostImpl::From(render_widget_host_);
@@ -398,22 +407,21 @@ void CefRenderWidgetHostViewOSR::Show() {
         GetViewBounds().size(), base::nullopt);
   }
 
-  if (!content::GpuDataManagerImpl::GetInstance()->IsGpuCompositingDisabled()) {
+  if (!use_shared_texture_ &&
+    !content::GpuDataManagerImpl::GetInstance()->IsGpuCompositingDisabled()) {
     // Start generating frames when we're visible and at the correct size.
     if (!video_consumer_) {
       video_consumer_.reset(new CefVideoConsumerOSR(this));
       UpdateFrameRate();
+
+      // Call OnRenderFrameMetadataChangedAfterActivation for every frame.
+      content::RenderFrameMetadataProviderImpl* provider =
+          content::RenderWidgetHostImpl::From(render_widget_host_)
+              ->render_frame_metadata_provider();
+      provider->ReportAllFrameSubmissionsForTesting(true);
     } else {
       video_consumer_->SetActive(true);
     }
-  }
-
-  if (render_widget_host_) {
-    // Call OnRenderFrameMetadataChangedAfterActivation for every frame.
-    content::RenderFrameMetadataProviderImpl* provider =
-        content::RenderWidgetHostImpl::From(render_widget_host_)
-            ->render_frame_metadata_provider();
-    provider->ReportAllFrameSubmissionsForTesting(true);
   }
 }
 
@@ -925,35 +933,13 @@ viz::FrameSinkId CefRenderWidgetHostViewOSR::GetRootFrameSinkId() {
 }
 
 void CefRenderWidgetHostViewOSR::OnRenderFrameMetadataChangedAfterActivation() {
-  auto metadata =
-      host_->render_frame_metadata_provider()->LastRenderFrameMetadata();
-
   if (video_consumer_) {
     // Need to wait for the first frame of the new size before calling
     // SizeChanged. Otherwise, the video frame will be letterboxed.
+    auto metadata =
+        host_->render_frame_metadata_provider()->LastRenderFrameMetadata();
     video_consumer_->SizeChanged(metadata.viewport_size_in_pixels);
   }
-
-  gfx::Vector2dF root_scroll_offset;
-  if (metadata.root_scroll_offset) {
-    root_scroll_offset = *metadata.root_scroll_offset;
-  }
-  if (root_scroll_offset != last_scroll_offset_) {
-    last_scroll_offset_ = root_scroll_offset;
-
-    if (!is_scroll_offset_changed_pending_) {
-      is_scroll_offset_changed_pending_ = true;
-
-      // Send the notification asynchronously.
-      CEF_POST_TASK(
-          CEF_UIT,
-          base::Bind(&CefRenderWidgetHostViewOSR::OnScrollOffsetChanged,
-                     weak_ptr_factory_.GetWeakPtr()));
-    }
-  }
-
-  content::RenderWidgetHostViewBase::
-      OnRenderFrameMetadataChangedAfterActivation();
 }
 
 std::unique_ptr<content::SyntheticGestureTarget>
@@ -1003,8 +989,8 @@ void CefRenderWidgetHostViewOSR::OnFrameComplete(
 
 std::unique_ptr<viz::HostDisplayClient>
 CefRenderWidgetHostViewOSR::CreateHostDisplayClient() {
-  host_display_client_ =
-      new CefHostDisplayClientOSR(this, gfx::kNullAcceleratedWidget);
+  host_display_client_ = new CefHostDisplayClientOSR(
+    this, gfx::kNullAcceleratedWidget, use_proxy_output_);
   host_display_client_->SetActive(true);
   return base::WrapUnique(host_display_client_);
 }
@@ -1508,6 +1494,35 @@ void CefRenderWidgetHostViewOSR::OnPaint(const gfx::Rect& damage_rect,
     ReleaseResizeHold();
 }
 
+void CefRenderWidgetHostViewOSR::OnAcceleratedPaint(
+    const gfx::Rect& damage_rect,
+    void* shared_texture) {
+  if (!shared_texture || !use_shared_texture_) {
+    return;
+  }
+
+  CefRefPtr<CefRenderHandler> handler =
+      browser_impl_->client()->GetRenderHandler();
+  CHECK(handler);
+
+  gfx::Rect rect_in_pixels(GetViewBounds());
+  rect_in_pixels.Intersect(damage_rect);
+
+  CefRenderHandler::RectList rcList;
+  rcList.push_back(CefRect(rect_in_pixels.x(), rect_in_pixels.y(),
+                           rect_in_pixels.width(), rect_in_pixels.height()));
+
+  handler->OnAcceleratedPaint(browser_impl_.get(),
+                              IsPopupWidget() ? PET_POPUP : PET_VIEW, rcList,
+                              shared_texture);
+
+  // Release the resize hold when we reach the desired size. The damage rect is
+  // currently always equal to the full texture size.
+  gfx::Size pixel_size(damage_rect.width(), damage_rect.height());
+  if (hold_resize_ && pixel_size == SizeInPixels())
+    ReleaseResizeHold();
+}
+
 ui::Layer* CefRenderWidgetHostViewOSR::GetRootLayer() const {
   return root_layer_.get();
 }
@@ -1689,11 +1704,13 @@ void CefRenderWidgetHostViewOSR::RemoveGuestHostView(
 
 void CefRenderWidgetHostViewOSR::InvalidateInternal(
     const gfx::Rect& bounds_in_pixels) {
-  if (video_consumer_) {
-    video_consumer_->RequestRefreshFrame(bounds_in_pixels);
-  } else if (host_display_client_) {
-    OnPaint(bounds_in_pixels, host_display_client_->GetPixelSize(),
-            host_display_client_->GetPixelMemory());
+  if (!use_shared_texture_) {
+    if (video_consumer_) {
+      video_consumer_->RequestRefreshFrame(bounds_in_pixels);
+    } else if (host_display_client_) {
+      OnPaint(bounds_in_pixels, host_display_client_->GetPixelSize(),
+              host_display_client_->GetPixelMemory());
+    }
   }
 }
 
