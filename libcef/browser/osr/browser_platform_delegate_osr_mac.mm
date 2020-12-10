@@ -10,10 +10,10 @@
 #include "libcef/browser/osr/render_widget_host_view_osr.h"
 
 CefBrowserPlatformDelegateOsrMac::CefBrowserPlatformDelegateOsrMac(
-    std::unique_ptr<CefBrowserPlatformDelegateNative> native_delegate)
+    std::unique_ptr<CefBrowserPlatformDelegateNative> native_delegate,   bool use_shared_texture, bool use_external_begin_frame)
     : CefBrowserPlatformDelegateOsr(std::move(native_delegate),
-                                    /*use_shared_texture=*/false,
-                                    /*use_external_begin_frame=*/false) {}
+                                    use_shared_texture,
+                                    use_external_begin_frame) {}
 
 CefWindowHandle CefBrowserPlatformDelegateOsrMac::GetHostWindowHandle() const {
   return native_delegate_->window_info().parent_view;
