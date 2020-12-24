@@ -100,7 +100,7 @@ index 1026b739d283..fe562ab60ce9 100644
   private:
    const HWND hwnd_;
 diff --git components/viz/service/BUILD.gn components/viz/service/BUILD.gn
-index eb1a0ae5ca25..846c738053b7 100644
+index 097977040913..a4707cbd209e 100644
 --- components/viz/service/BUILD.gn
 +++ components/viz/service/BUILD.gn
 @@ -13,7 +13,12 @@ config("viz_service_implementation") {
@@ -117,7 +117,7 @@ index eb1a0ae5ca25..846c738053b7 100644
      "display/bsp_tree.h",
      "display/bsp_walk_action.cc",
 diff --git components/viz/service/display_embedder/output_surface_provider_impl.cc components/viz/service/display_embedder/output_surface_provider_impl.cc
-index b4d4b1c1c597..9ce685048ab1 100644
+index da8936a87cfe..2530ede69fa6 100644
 --- components/viz/service/display_embedder/output_surface_provider_impl.cc
 +++ components/viz/service/display_embedder/output_surface_provider_impl.cc
 @@ -13,6 +13,8 @@
@@ -152,7 +152,7 @@ index b4d4b1c1c597..9ce685048ab1 100644
      } else if (context_provider->ContextCapabilities().surfaceless) {
  #if defined(USE_OZONE) || defined(OS_MACOSX) || defined(OS_ANDROID)
  #if defined(USE_OZONE)
-@@ -224,6 +238,20 @@ OutputSurfaceProviderImpl::CreateSoftwareOutputDeviceForPlatform(
+@@ -223,6 +237,20 @@ OutputSurfaceProviderImpl::CreateSoftwareOutputDeviceForPlatform(
    if (headless_)
      return std::make_unique<SoftwareOutputDevice>();
  
@@ -190,10 +190,10 @@ index 2bb30e5318b6..535535dd6c10 100644
  
    TRACE_EVENT_ASYNC_BEGIN0("viz", "SoftwareOutputDeviceWinProxy::Draw", this);
 diff --git content/browser/compositor/viz_process_transport_factory.cc content/browser/compositor/viz_process_transport_factory.cc
-index 8e10af98f2b0..d39fc7ec7b4c 100644
+index 641a63e8c18e..cdb9a23a1f3e 100644
 --- content/browser/compositor/viz_process_transport_factory.cc
 +++ content/browser/compositor/viz_process_transport_factory.cc
-@@ -404,8 +404,13 @@ void VizProcessTransportFactory::OnEstablishedGpuChannel(
+@@ -403,8 +403,13 @@ void VizProcessTransportFactory::OnEstablishedGpuChannel(
    compositor_data.display_private.reset();
    root_params->display_private =
        compositor_data.display_private.BindNewEndpointAndPassReceiver();
@@ -210,7 +210,7 @@ index 8e10af98f2b0..d39fc7ec7b4c 100644
        compositor_data.display_client->GetBoundRemote(resize_task_runner_);
  
 diff --git mojo/public/cpp/bindings/sync_call_restrictions.h mojo/public/cpp/bindings/sync_call_restrictions.h
-index 60e114920575..01f2ce164a3b 100644
+index 599d24e260ae..13bb4cc5910f 100644
 --- mojo/public/cpp/bindings/sync_call_restrictions.h
 +++ mojo/public/cpp/bindings/sync_call_restrictions.h
 @@ -33,6 +33,7 @@ class Compositor;
@@ -230,9 +230,8 @@ index 60e114920575..01f2ce164a3b 100644
    // For calling sync mojo API to get cdm origin. The service and the client are
    // running in the same process, so it won't block anything.
    // TODO(159346933) Remove once the origin isolation logic is moved outside of
-   
 diff --git services/viz/privileged/mojom/compositing/BUILD.gn services/viz/privileged/mojom/compositing/BUILD.gn
-index 75e2ff88e837..bde3239a6af9 100644
+index 53af38d06f54..a685c788e786 100644
 --- services/viz/privileged/mojom/compositing/BUILD.gn
 +++ services/viz/privileged/mojom/compositing/BUILD.gn
 @@ -18,6 +18,7 @@ mojom("compositing") {
@@ -244,7 +243,7 @@ index 75e2ff88e837..bde3239a6af9 100644
      "//media/capture/mojom:video_capture",
      "//media/mojo/mojom",
 diff --git services/viz/privileged/mojom/compositing/display_private.mojom services/viz/privileged/mojom/compositing/display_private.mojom
-index d36f62e6ee41..cae50374a148 100644
+index d88fab3b7d0a..810ecb855e08 100644
 --- services/viz/privileged/mojom/compositing/display_private.mojom
 +++ services/viz/privileged/mojom/compositing/display_private.mojom
 @@ -12,6 +12,7 @@ import "ui/gfx/mojom/overlay_transform.mojom";
@@ -288,10 +287,10 @@ index 6b7fbb6cf13d..e2af75168cb9 100644
 +  Draw(gfx.mojom.Rect damage_rect) => ();
  };
 diff --git ui/compositor/compositor.h ui/compositor/compositor.h
-index 3e2d2304faf7..f0029d34f591 100644
+index 438dd212d881..c2e112def4e9 100644
 --- ui/compositor/compositor.h
 +++ ui/compositor/compositor.h
-@@ -23,7 +23,9 @@
+@@ -25,7 +25,9 @@
  #include "cc/trees/layer_tree_host_single_thread_client.h"
  #include "components/viz/common/frame_sinks/begin_frame_args.h"
  #include "components/viz/common/surfaces/frame_sink_id.h"
@@ -301,7 +300,7 @@ index 3e2d2304faf7..f0029d34f591 100644
  #include "mojo/public/cpp/bindings/pending_remote.h"
  #include "services/viz/privileged/mojom/compositing/vsync_parameter_observer.mojom-forward.h"
  #include "third_party/skia/include/core/SkColor.h"
-@@ -122,6 +124,14 @@ class COMPOSITOR_EXPORT ContextFactory {
+@@ -127,6 +129,14 @@ class COMPOSITOR_EXPORT ContextFactory {
    virtual viz::HostFrameSinkManager* GetHostFrameSinkManager() = 0;
  };
  
@@ -316,7 +315,7 @@ index 3e2d2304faf7..f0029d34f591 100644
  // Compositor object to take care of GPU painting.
  // A Browser compositor object is responsible for generating the final
  // displayable form of pixels comprising a single widget's contents. It draws an
-@@ -155,6 +165,9 @@ class COMPOSITOR_EXPORT Compositor : public cc::LayerTreeHostClient,
+@@ -161,6 +171,9 @@ class COMPOSITOR_EXPORT Compositor : public cc::LayerTreeHostClient,
    // Schedules a redraw of the layer tree associated with this compositor.
    void ScheduleDraw();
  
@@ -326,7 +325,7 @@ index 3e2d2304faf7..f0029d34f591 100644
    // Sets the root of the layer tree drawn by this Compositor. The root layer
    // must have no parent. The compositor's root layer is reset if the root layer
    // is destroyed. NULL can be passed to reset the root layer, in which case the
-@@ -390,6 +403,8 @@ class COMPOSITOR_EXPORT Compositor : public cc::LayerTreeHostClient,
+@@ -424,6 +437,8 @@ class COMPOSITOR_EXPORT Compositor : public cc::LayerTreeHostClient,
  
    std::unique_ptr<PendingBeginFrameArgs> pending_begin_frame_args_;
  
