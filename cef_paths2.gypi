@@ -563,6 +563,7 @@
       'tests/ceftests/cors_unittest.cc',
       'tests/ceftests/dom_unittest.cc',
       'tests/ceftests/frame_unittest.cc',
+      'tests/ceftests/media_access_unittest.cc',
       'tests/ceftests/message_router_unittest.cc',
       'tests/ceftests/navigation_unittest.cc',
       'tests/ceftests/pdf_viewer_unittest.cc',
