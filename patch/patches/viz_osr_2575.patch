@@ -1,5 +1,20 @@
+diff --git components/viz/common/features.cc components/viz/common/features.cc
+index 6a67b2ba02a5d9a70723cc0fae9f4fea178b3b5e..ef7b519cf27c27fd25e0318ee66593fb6e78f654 100644
+--- components/viz/common/features.cc
++++ components/viz/common/features.cc
+@@ -53,8 +53,8 @@ const base::Feature kSimpleFrameRateThrottling{
+ // Use the SkiaRenderer.
+ const base::Feature kUseSkiaRenderer {
+   "UseSkiaRenderer",
+-#if defined(OS_WIN) || defined(OS_ANDROID) || BUILDFLAG(IS_CHROMEOS_LACROS) || \
+-    defined(OS_LINUX) || defined(OS_FUCHSIA) || defined(OS_MAC)
++#if defined(OS_ANDROID) || BUILDFLAG(IS_CHROMEOS_LACROS) || \
++    defined(OS_LINUX) || defined(OS_FUCHSIA)
+       base::FEATURE_ENABLED_BY_DEFAULT
+ #else
+       base::FEATURE_DISABLED_BY_DEFAULT
 diff --git components/viz/host/host_display_client.cc components/viz/host/host_display_client.cc
-index 3b00759e513dc..90fe332d59f5b 100644
+index 3b00759e513dc7e19fd68398e853c8ce6ac73905..be0a279dcc40f3a719a4c757fe98077431e568a5 100644
 --- components/viz/host/host_display_client.cc
 +++ components/viz/host/host_display_client.cc
 @@ -45,9 +45,14 @@ void HostDisplayClient::OnDisplayReceivedCALayerParams(
@@ -18,7 +33,7 @@ index 3b00759e513dc..90fe332d59f5b 100644
    if (!NeedsToUseLayerWindow(widget_)) {
      DLOG(ERROR) << "HWND shouldn't be using a layered window";
      return;
-@@ -55,8 +60,8 @@ void HostDisplayClient::CreateLayeredWindowUpdater(
+@@ -55,9 +60,12 @@ void HostDisplayClient::CreateLayeredWindowUpdater(
  
    layered_window_updater_ =
        std::make_unique<LayeredWindowUpdaterImpl>(widget_, std::move(receiver));
@@ -26,13 +41,25 @@ index 3b00759e513dc..90fe332d59f5b 100644
  #endif
 +}
  
++void HostDisplayClient::CreateExternalRendererUpdater(
++    mojo::PendingReceiver<mojom::ExternalRendererUpdater> receiver) {
++}
  // TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
  // of lacros-chrome is complete.
+ #if defined(OS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
 diff --git components/viz/host/host_display_client.h components/viz/host/host_display_client.h
-index e98a856f2dd17..deceb8745a978 100644
+index e98a856f2dd17d54993af5cefb6ba4a43e884d74..aef804dbae06e1c16bc81a8184d8baf5b478e1c6 100644
 --- components/viz/host/host_display_client.h
 +++ components/viz/host/host_display_client.h
-@@ -35,17 +35,17 @@ class VIZ_HOST_EXPORT HostDisplayClient : public mojom::DisplayClient {
+@@ -15,6 +15,7 @@
+ #include "mojo/public/cpp/bindings/pending_remote.h"
+ #include "mojo/public/cpp/bindings/receiver.h"
+ #include "services/viz/privileged/mojom/compositing/display_private.mojom.h"
++#include "cef/libcef/browser/osr/external_renderer_updater.mojom.h"
+ #include "ui/gfx/native_widget_types.h"
+ 
+ namespace viz {
+@@ -35,18 +36,20 @@ class VIZ_HOST_EXPORT HostDisplayClient : public mojom::DisplayClient {
    mojo::PendingRemote<mojom::DisplayClient> GetBoundRemote(
        scoped_refptr<base::SingleThreadTaskRunner> task_runner);
  
@@ -51,10 +78,13 @@ index e98a856f2dd17..deceb8745a978 100644
        mojo::PendingReceiver<mojom::LayeredWindowUpdater> receiver) override;
 -#endif
  
++  void CreateExternalRendererUpdater(
++      mojo::PendingReceiver<mojom::ExternalRendererUpdater> receiver) override;
  // TODO(crbug.com/1052397): Revisit the macro expression once build flag switch
  // of lacros-chrome is complete.
+ #if defined(OS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS)
 diff --git components/viz/host/layered_window_updater_impl.cc components/viz/host/layered_window_updater_impl.cc
-index b04f654fe820f..131977a36591d 100644
+index b04f654fe820f821b18e059cdd40085fc2384c4e..131977a36591d5d2f89923007f89ea2beaf9bdea 100644
 --- components/viz/host/layered_window_updater_impl.cc
 +++ components/viz/host/layered_window_updater_impl.cc
 @@ -44,7 +44,7 @@ void LayeredWindowUpdaterImpl::OnAllocatedSharedMemory(
@@ -67,7 +97,7 @@ index b04f654fe820f..131977a36591d 100644
  
    if (!canvas_) {
 diff --git components/viz/host/layered_window_updater_impl.h components/viz/host/layered_window_updater_impl.h
-index 894237a777fbf..4310c08b0c2cf 100644
+index 894237a777fbf829e309772153fa5fcb9eec5598..4310c08b0c2cf97f387d290ae85c14f8539f2002 100644
 --- components/viz/host/layered_window_updater_impl.h
 +++ components/viz/host/layered_window_updater_impl.h
 @@ -39,7 +39,7 @@ class VIZ_HOST_EXPORT LayeredWindowUpdaterImpl
@@ -79,32 +109,43 @@ index 894237a777fbf..4310c08b0c2cf 100644
  
   private:
    const HWND hwnd_;
-diff --git components/viz/service/BUILD.gn components/viz/service/BUILD.gn
-index 1ccab1bcbbcb5..e7da4f03c3875 100644
---- components/viz/service/BUILD.gn
-+++ components/viz/service/BUILD.gn
-@@ -208,6 +208,8 @@ viz_component("service") {
-     "transitions/transferable_resource_tracker.cc",
-     "transitions/transferable_resource_tracker.h",
-     "viz_service_export.h",
-+    "//cef/libcef/browser/osr/software_output_device_proxy.cc",
-+    "//cef/libcef/browser/osr/software_output_device_proxy.h",
-   ]
- 
-   defines = [ "VIZ_SERVICE_IMPLEMENTATION" ]
 diff --git components/viz/service/display_embedder/output_surface_provider_impl.cc components/viz/service/display_embedder/output_surface_provider_impl.cc
-index e0afde4b0cb45..8782e6a6a3cc3 100644
+index e0afde4b0cb45cb6cf2cae6f001875973898bb64..fc0277bbbdd75eec1cf50e2f6e309d19e35de9f5 100644
 --- components/viz/service/display_embedder/output_surface_provider_impl.cc
 +++ components/viz/service/display_embedder/output_surface_provider_impl.cc
-@@ -16,6 +16,7 @@
+@@ -16,6 +16,8 @@
  #include "build/chromecast_buildflags.h"
  #include "build/chromeos_buildflags.h"
  #include "cc/base/switches.h"
++#include "cef/libcef/browser/osr/gl_output_surface_external.h"
 +#include "cef/libcef/browser/osr/software_output_device_proxy.h"
  #include "components/viz/common/display/renderer_settings.h"
  #include "components/viz/common/frame_sinks/begin_frame_source.h"
  #include "components/viz/service/display/display_compositor_memory_and_task_controller.h"
-@@ -246,6 +247,20 @@ OutputSurfaceProviderImpl::CreateSoftwareOutputDeviceForPlatform(
+@@ -208,8 +210,20 @@ std::unique_ptr<OutputSurface> OutputSurfaceProviderImpl::CreateOutputSurface(
+     }
+ 
+     if (surface_handle == gpu::kNullSurfaceHandle) {
+-      output_surface = std::make_unique<GLOutputSurfaceOffscreen>(
+-          std::move(context_provider));
++        mojo::ScopedAllowSyncCallForTesting allow_sync;
++        bool use_proxy_output_device = false;
++        if (display_client->UseProxyOutputDevice(&use_proxy_output_device) &&
++            use_proxy_output_device) {
++          mojom::ExternalRendererUpdaterPtr external_renderer_updater;
++          display_client->CreateExternalRendererUpdater(
++            mojo::MakeRequest(&external_renderer_updater));
++          output_surface = std::make_unique<GLOutputSurfaceExternal>(
++            std::move(context_provider), gpu_memory_buffer_manager_.get(),
++            std::move(external_renderer_updater));
++        } else {
++          output_surface = std::make_unique<GLOutputSurfaceOffscreen>(
++            std::move(context_provider));
++        }
+     } else if (context_provider->ContextCapabilities().surfaceless) {
+ #if defined(USE_OZONE) || defined(OS_APPLE) || defined(OS_ANDROID)
+       output_surface = std::make_unique<GLOutputSurfaceBufferQueue>(
+@@ -246,6 +260,20 @@ OutputSurfaceProviderImpl::CreateSoftwareOutputDeviceForPlatform(
    if (headless_)
      return std::make_unique<SoftwareOutputDevice>();
  
@@ -116,9 +157,9 @@ index e0afde4b0cb45..8782e6a6a3cc3 100644
 +        use_proxy_output_device) {
 +      mojom::LayeredWindowUpdaterPtr layered_window_updater;
 +      display_client->CreateLayeredWindowUpdater(
-+          mojo::MakeRequest(&layered_window_updater));
++        mojo::MakeRequest(&layered_window_updater));
 +      return std::make_unique<SoftwareOutputDeviceProxy>(
-+          std::move(layered_window_updater));
++        std::move(layered_window_updater));
 +    }
 +  }
 +
@@ -126,7 +167,7 @@ index e0afde4b0cb45..8782e6a6a3cc3 100644
    return CreateSoftwareOutputDeviceWin(surface_handle, &output_device_backing_,
                                         display_client);
 diff --git components/viz/service/display_embedder/software_output_device_win.cc components/viz/service/display_embedder/software_output_device_win.cc
-index 583e3e2525c75..e1836039ad8a5 100644
+index 583e3e2525c753a0962d481fc67a3582df75d0e9..e1836039ad8a50ce05dbb700a7a8c2814bb72fa3 100644
 --- components/viz/service/display_embedder/software_output_device_win.cc
 +++ components/viz/service/display_embedder/software_output_device_win.cc
 @@ -191,8 +191,9 @@ void SoftwareOutputDeviceWinProxy::EndPaintDelegated(
@@ -141,8 +182,23 @@ index 583e3e2525c75..e1836039ad8a5 100644
    waiting_on_draw_ack_ = true;
  
    TRACE_EVENT_ASYNC_BEGIN0("viz", "SoftwareOutputDeviceWinProxy::Draw", this);
+diff --git components/viz/service/BUILD.gn components/viz/service/BUILD.gn
+index 1ccab1bcbbcb5fe092998c96a6a6d84c593629cf..276fff27b2e92600b724a0981d7469f5d2308cfd 100644
+--- components/viz/service/BUILD.gn
++++ components/viz/service/BUILD.gn
+@@ -208,6 +208,10 @@ viz_component("service") {
+     "transitions/transferable_resource_tracker.cc",
+     "transitions/transferable_resource_tracker.h",
+     "viz_service_export.h",
++    "//cef/libcef/browser/osr/gl_output_surface_external.cc",
++    "//cef/libcef/browser/osr/gl_output_surface_external.h",
++    "//cef/libcef/browser/osr/software_output_device_proxy.cc",
++    "//cef/libcef/browser/osr/software_output_device_proxy.h",
+   ]
+ 
+   defines = [ "VIZ_SERVICE_IMPLEMENTATION" ]
 diff --git content/browser/compositor/viz_process_transport_factory.cc content/browser/compositor/viz_process_transport_factory.cc
-index bb929cb9ff381..ddc3707284c28 100644
+index bb929cb9ff381b1186f8df68e952d8f13a24a5d9..ddc3707284c28fd9d959b20bf98a30abaf115f5a 100644
 --- content/browser/compositor/viz_process_transport_factory.cc
 +++ content/browser/compositor/viz_process_transport_factory.cc
 @@ -382,8 +382,13 @@ void VizProcessTransportFactory::OnEstablishedGpuChannel(
@@ -162,7 +218,7 @@ index bb929cb9ff381..ddc3707284c28 100644
        compositor_data.display_client->GetBoundRemote(resize_task_runner_);
  
 diff --git mojo/public/cpp/bindings/sync_call_restrictions.h mojo/public/cpp/bindings/sync_call_restrictions.h
-index 986469b5c09c4..251cb9eb27ede 100644
+index 986469b5c09c432835884b337f4ca19656832162..251cb9eb27ede3e14866c01e79516e1dc05508cc 100644
 --- mojo/public/cpp/bindings/sync_call_restrictions.h
 +++ mojo/public/cpp/bindings/sync_call_restrictions.h
 @@ -43,6 +43,7 @@ class Compositor;
@@ -182,11 +238,31 @@ index 986469b5c09c4..251cb9eb27ede 100644
    // For calling sync mojo API to get cdm origin. The service and the client are
    // running in the same process, so it won't block anything.
    // TODO(159346933) Remove once the origin isolation logic is moved outside of
+diff --git services/viz/privileged/mojom/compositing/BUILD.gn services/viz/privileged/mojom/compositing/BUILD.gn
+index 417ca186edcd9ccb637c9ae5e4ae52fd01bda9a9..d40b2ededc47745162b83f24cb406e2da0383688 100644
+--- services/viz/privileged/mojom/compositing/BUILD.gn
++++ services/viz/privileged/mojom/compositing/BUILD.gn
+@@ -18,6 +18,7 @@ mojom("compositing") {
+   ]
+ 
+   public_deps = [
++    "//cef/libcef/browser/osr",
+     "//gpu/ipc/common:interfaces",
+     "//media/capture/mojom:video_capture",
+     "//media/mojo/mojom",
 diff --git services/viz/privileged/mojom/compositing/display_private.mojom services/viz/privileged/mojom/compositing/display_private.mojom
-index 9f7583e424057..c301c518dd8ec 100644
+index 9f7583e42405760bbe5994c87c4347a7d5a36fbe..1d0eaa4f6dee492f1f56ca8e965a763309867dfe 100644
 --- services/viz/privileged/mojom/compositing/display_private.mojom
 +++ services/viz/privileged/mojom/compositing/display_private.mojom
-@@ -89,12 +89,14 @@ interface DisplayPrivate {
+@@ -13,6 +13,7 @@ import "ui/gfx/mojom/overlay_transform.mojom";
+ import "ui/gfx/mojom/transform.mojom";
+ import "ui/gfx/geometry/mojom/geometry.mojom";
+ import "ui/latency/mojom/latency_info.mojom";
++import "cef/libcef/browser/osr/external_renderer_updater.mojom";
+ import "services/viz/privileged/mojom/compositing/layered_window_updater.mojom";
+ import "services/viz/privileged/mojom/compositing/vsync_parameter_observer.mojom";
+ 
+@@ -89,14 +90,19 @@ interface DisplayPrivate {
  };
  
  interface DisplayClient {
@@ -201,9 +277,14 @@ index 9f7583e424057..c301c518dd8ec 100644
 -  [EnableIf=is_win]
    CreateLayeredWindowUpdater(pending_receiver<LayeredWindowUpdater> receiver);
  
++  // Creates an ExternalRendererUpdater
++  CreateExternalRendererUpdater(pending_receiver<ExternalRendererUpdater> receiver);
++
    // Notifies that a swap has occurred and provides information about the pixel
+   // size of the swapped frame.
+   [EnableIf=is_android]
 diff --git services/viz/privileged/mojom/compositing/layered_window_updater.mojom services/viz/privileged/mojom/compositing/layered_window_updater.mojom
-index 6b7fbb6cf13dc..e2af75168cb91 100644
+index 6b7fbb6cf13dc8ee6ade0878a9a2c1efc5d4d3f1..e2af75168cb914a7b3b4a6c9b6a285498c3f8e72 100644
 --- services/viz/privileged/mojom/compositing/layered_window_updater.mojom
 +++ services/viz/privileged/mojom/compositing/layered_window_updater.mojom
 @@ -26,5 +26,5 @@ interface LayeredWindowUpdater {
@@ -214,7 +295,7 @@ index 6b7fbb6cf13dc..e2af75168cb91 100644
 +  Draw(gfx.mojom.Rect damage_rect) => ();
  };
 diff --git ui/compositor/compositor.h ui/compositor/compositor.h
-index 8b5b2b055343e..69751904955fa 100644
+index 8b5b2b055343ec2be2efcc0f5b64ae0db588190c..69751904955fab377174d3fc3ddd6e7c61fecdf5 100644
 --- ui/compositor/compositor.h
 +++ ui/compositor/compositor.h
 @@ -30,7 +30,9 @@
@@ -261,3 +342,18 @@ index 8b5b2b055343e..69751904955fa 100644
    // The root of the Layer tree drawn by this compositor.
    Layer* root_layer_ = nullptr;
  
+diff --git ui/gl/gl_image_dxgi.cc ui/gl/gl_image_dxgi.cc
+index 8b5c79684540427e69e88a790d47b8086fc7c4fa..b010022d478237e3732c5c87eef4addd6a91fdbf 100644
+--- ui/gl/gl_image_dxgi.cc
++++ ui/gl/gl_image_dxgi.cc
+@@ -164,8 +164,8 @@ bool GLImageDXGI::BindTexImage(unsigned target) {
+       return false;
+   }
+ 
+-  // We don't wait, just return immediately.
+-  HRESULT hrWait = keyed_mutex_->AcquireSync(KEY_BIND, 0);
++  // Wait infinitely
++  HRESULT hrWait = keyed_mutex_->AcquireSync(KEY_BIND, INFINITE);
+ 
+   if (hrWait == WAIT_TIMEOUT || hrWait == WAIT_ABANDONED || FAILED(hrWait)) {
+     NOTREACHED();
