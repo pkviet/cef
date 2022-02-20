@@ -1,0 +1,74 @@
+diff --git gpu/ipc/service/gpu_memory_buffer_factory_dxgi.cc gpu/ipc/service/gpu_memory_buffer_factory_dxgi.cc
+index c6855292a3b2d..1443afc088437 100644
+--- gpu/ipc/service/gpu_memory_buffer_factory_dxgi.cc
++++ gpu/ipc/service/gpu_memory_buffer_factory_dxgi.cc
+@@ -129,7 +129,7 @@ gfx::GpuMemoryBufferHandle GpuMemoryBufferFactoryDXGI::CreateGpuMemoryBuffer(
+       dxgi_format,
+       {1, 0},
+       D3D11_USAGE_DEFAULT,
+-      D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET,
++      D3D11_BIND_SHADER_RESOURCE,
+       0,
+       D3D11_RESOURCE_MISC_SHARED_NTHANDLE |
+           D3D11_RESOURCE_MISC_SHARED};
+diff --git ui/gl/gl_image_dxgi.cc ui/gl/gl_image_dxgi.cc
+index 4efc38c92b23e..603b46aa221cc 100644
+--- ui/gl/gl_image_dxgi.cc
++++ ui/gl/gl_image_dxgi.cc
+@@ -204,6 +204,18 @@ void GLImageDXGI::ReleaseTexImage(unsigned target) {
+     return;
+ 
+   DCHECK(texture_);
++  // Copy to the shared texture as a form of jank synchronization
++  if (staging_.Get() && texture_.Get()) {
++    Microsoft::WRL::ComPtr<ID3D11Device> d3d11_device;
++    staging_->GetDevice(&d3d11_device);
++    if (d3d11_device.Get()) {
++      Microsoft::WRL::ComPtr<ID3D11DeviceContext> d3d11_ctx;
++      d3d11_device->GetImmediateContext(&d3d11_ctx);
++      if (d3d11_ctx.Get()) {
++        d3d11_ctx->CopyResource(staging_.Get(), texture_.Get());
++      }
++    }
++  }
+ 
+   eglReleaseTexImage(gl::GLSurfaceEGL::GetGLDisplayEGL()->GetDisplay(),
+                      surface_, EGL_BACK_BUFFER);
+@@ -224,14 +236,20 @@ bool GLImageDXGI::InitializeHandle(base::win::ScopedHandle handle,
+     return false;
+ 
+   if (FAILED(d3d11_device1->OpenSharedResource1(handle.Get(),
+-                                                IID_PPV_ARGS(&texture_)))) {
++                                                IID_PPV_ARGS(&staging_)))) {
+     return false;
+   }
+   D3D11_TEXTURE2D_DESC desc;
+-  texture_->GetDesc(&desc);
++  staging_->GetDesc(&desc);
+   if (desc.ArraySize <= level_)
+     return false;
+ 
++  desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
++  desc.MiscFlags = 0;
++  
++  if (FAILED(d3d11_device1->CreateTexture2D(&desc, nullptr, &texture_))) {
++    return false;
++  }
+   handle_ = std::move(handle);
+   return true;
+ }
+diff --git ui/gl/gl_image_dxgi.h ui/gl/gl_image_dxgi.h
+index faca1ed063e00..f14b17363ed99 100644
+--- ui/gl/gl_image_dxgi.h
++++ ui/gl/gl_image_dxgi.h
+@@ -63,6 +63,7 @@ class GL_EXPORT GLImageDXGI : public GLImage {
+   EGLSurface surface_ = nullptr;
+   EGLStreamKHR stream_ = nullptr;
+   Microsoft::WRL::ComPtr<ID3D11Texture2D> texture_;
++  Microsoft::WRL::ComPtr<ID3D11Texture2D> staging_;
+ };
+ 
+ // This copies to a new texture on bind.
+-- 
+2.36.1.windows.1
+
