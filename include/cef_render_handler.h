@@ -183,7 +183,11 @@ class CefRenderHandler : public virtual CefBaseRefCounted {
                                   PaintElementType type,
                                   const RectList& dirtyRects,
                                   void* shared_handle) {}
-
+  ///
+  // New implementation by Jim. Doesn't used keyed_mutexes.
+  // There's a bool which signals a new texture.
+  ///
+  /*--cef()--*/
   virtual void OnAcceleratedPaint2(CefRefPtr<CefBrowser> browser,
                                    PaintElementType type,
                                    const RectList& dirtyRects,
