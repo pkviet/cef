@@ -1,0 +1,752 @@
+From d5c3f5e5909c479481b08c765e8b654ef2f467b5 Mon Sep 17 00:00:00 2001
+From: "Chrome Release Bot (LUCI)"
+ <chrome-official-brancher@chops-service-accounts.iam.gserviceaccount.com>
+Date: Mon, 28 Nov 2022 22:30:43 +0000
+Subject: [PATCH] Revert "Cleanup InProcessCommandBuffer deps"
+
+This reverts commit 0155a06665502d3052a395aa2908aa83ce093717.
+
+# Conflicts:
+#	gpu/command_buffer/service/shared_image_interface_in_process.cc
+---
+ ...y_compositor_memory_and_task_controller.cc | 38 ++++++++--
+ ...ay_compositor_memory_and_task_controller.h | 20 ++++-
+ .../viz/service/display/skia_output_surface.h |  7 ++
+ .../skia_output_surface_impl.cc               |  4 +
+ .../skia_output_surface_impl.h                |  1 +
+ ..._video_frame_pool_context_provider_impl.cc |  3 +-
+ .../viz/test/fake_skia_output_surface.h       |  3 +-
+ ...sitor_memory_and_task_controller_on_gpu.cc | 44 ++++++++++-
+ ...ositor_memory_and_task_controller_on_gpu.h | 10 +++
+ .../shared_image_interface_in_process.cc      | 73 ++++++++++++++-----
+ .../shared_image_interface_in_process.h       | 35 ++++++---
+ gpu/ipc/in_process_command_buffer.cc          | 36 +++++----
+ gpu/ipc/in_process_command_buffer.h           | 10 ++-
+ 13 files changed, 224 insertions(+), 60 deletions(-)
+
+diff --git components/viz/service/display/display_compositor_memory_and_task_controller.cc components/viz/service/display/display_compositor_memory_and_task_controller.cc
+index 71d48457a5968..8326257efb729 100644
+--- components/viz/service/display/display_compositor_memory_and_task_controller.cc
++++ components/viz/service/display/display_compositor_memory_and_task_controller.cc
+@@ -23,15 +23,32 @@ DisplayCompositorMemoryAndTaskController::
+   DCHECK(gpu_task_scheduler_);
+   base::WaitableEvent event(base::WaitableEvent::ResetPolicy::MANUAL,
+                             base::WaitableEvent::InitialState::NOT_SIGNALED);
+-  auto callback =
+-      base::BindOnce(&DisplayCompositorMemoryAndTaskController::InitializeOnGpu,
+-                     base::Unretained(this), skia_dependency_.get(), &event);
++  auto callback = base::BindOnce(
++      &DisplayCompositorMemoryAndTaskController::InitializeOnGpuSkia,
++      base::Unretained(this), skia_dependency_.get(), &event);
+   gpu_task_scheduler_->ScheduleGpuTask(std::move(callback), {});
+   event.Wait();
+ 
+   shared_image_interface_ =
+       std::make_unique<gpu::SharedImageInterfaceInProcess>(
+-          gpu_task_scheduler_->GetTaskSequence(), controller_on_gpu_.get());
++          gpu_task_scheduler_->GetTaskSequence(), controller_on_gpu_.get(),
++          nullptr /* command_buffer_helper*/);
++}
++
++DisplayCompositorMemoryAndTaskController::
++    DisplayCompositorMemoryAndTaskController(
++        gpu::CommandBufferTaskExecutor* task_executor,
++        gpu::ImageFactory* image_factory)
++    : gpu_task_scheduler_(
++          std::make_unique<gpu::GpuTaskSchedulerHelper>(task_executor)) {
++  DCHECK(gpu_task_scheduler_);
++  base::WaitableEvent event(base::WaitableEvent::ResetPolicy::MANUAL,
++                            base::WaitableEvent::InitialState::NOT_SIGNALED);
++  auto callback = base::BindOnce(
++      &DisplayCompositorMemoryAndTaskController::InitializeOnGpuGL,
++      base::Unretained(this), task_executor, image_factory, &event);
++  gpu_task_scheduler_->GetTaskSequence()->ScheduleTask(std::move(callback), {});
++  event.Wait();
+ }
+ 
+ DisplayCompositorMemoryAndTaskController::
+@@ -52,7 +69,7 @@ DisplayCompositorMemoryAndTaskController::
+   event.Wait();
+ }
+ 
+-void DisplayCompositorMemoryAndTaskController::InitializeOnGpu(
++void DisplayCompositorMemoryAndTaskController::InitializeOnGpuSkia(
+     SkiaOutputSurfaceDependency* skia_dependency,
+     base::WaitableEvent* event) {
+   DCHECK(event);
+@@ -69,6 +86,17 @@ void DisplayCompositorMemoryAndTaskController::InitializeOnGpu(
+   event->Signal();
+ }
+ 
++void DisplayCompositorMemoryAndTaskController::InitializeOnGpuGL(
++    gpu::CommandBufferTaskExecutor* task_executor,
++    gpu::ImageFactory* image_factory,
++    base::WaitableEvent* event) {
++  DCHECK(event);
++  controller_on_gpu_ =
++      std::make_unique<gpu::DisplayCompositorMemoryAndTaskControllerOnGpu>(
++          task_executor, image_factory);
++  event->Signal();
++}
++
+ void DisplayCompositorMemoryAndTaskController::DestroyOnGpu(
+     base::WaitableEvent* event) {
+   DCHECK(event);
+diff --git components/viz/service/display/display_compositor_memory_and_task_controller.h components/viz/service/display/display_compositor_memory_and_task_controller.h
+index e01d136165ae5..125aa6e51891c 100644
+--- components/viz/service/display/display_compositor_memory_and_task_controller.h
++++ components/viz/service/display/display_compositor_memory_and_task_controller.h
+@@ -16,9 +16,10 @@ class WaitableEvent;
+ }
+ 
+ namespace gpu {
++class ImageFactory;
+ class SharedImageInterface;
+ class SharedImageInterfaceInProcess;
+-}  // namespace gpu
++}
+ 
+ namespace viz {
+ class SkiaOutputSurfaceDependency;
+@@ -26,11 +27,17 @@ class SkiaOutputSurfaceDependency;
+ // This class holds onwership of task posting sequence to the gpu thread and
+ // memory tracking for the display compositor. This class has a 1:1 relationship
+ // to the display compositor class. This class is only used for gpu compositing.
+-// TODO(weiliangc): This should merge with SkiaOutputSurfaceDependency.
++// TODO(weiliangc): After GLRenderer is removed, this should merge with
++// SkiaOutputSurfaceDependency.
+ class VIZ_SERVICE_EXPORT DisplayCompositorMemoryAndTaskController {
+  public:
++  // For SkiaRenderer.
+   explicit DisplayCompositorMemoryAndTaskController(
+       std::unique_ptr<SkiaOutputSurfaceDependency> skia_dependency);
++  // For InProcessCommandBuffer.
++  DisplayCompositorMemoryAndTaskController(
++      gpu::CommandBufferTaskExecutor* task_executor,
++      gpu::ImageFactory* image_factory);
+   DisplayCompositorMemoryAndTaskController(
+       const DisplayCompositorMemoryAndTaskController&) = delete;
+   DisplayCompositorMemoryAndTaskController& operator=(
+@@ -51,8 +58,11 @@ class VIZ_SERVICE_EXPORT DisplayCompositorMemoryAndTaskController {
+   gpu::SharedImageInterface* shared_image_interface();
+ 
+  private:
+-  void InitializeOnGpu(SkiaOutputSurfaceDependency* skia_dependency,
+-                       base::WaitableEvent* event);
++  void InitializeOnGpuSkia(SkiaOutputSurfaceDependency* skia_dependency,
++                           base::WaitableEvent* event);
++  void InitializeOnGpuGL(gpu::CommandBufferTaskExecutor* task_executor,
++                         gpu::ImageFactory* image_factory,
++                         base::WaitableEvent* event);
+   void DestroyOnGpu(base::WaitableEvent* event);
+ 
+   // Accessed on viz compositor thread.
+@@ -65,6 +75,8 @@ class VIZ_SERVICE_EXPORT DisplayCompositorMemoryAndTaskController {
+       controller_on_gpu_;
+ 
+   // Accessed on the compositor thread.
++  // TODO(weiliangc): Move the GLRenderer's SharedImageInterface ownership here
++  // as well.
+   std::unique_ptr<gpu::SharedImageInterfaceInProcess> shared_image_interface_;
+ };
+ 
+diff --git components/viz/service/display/skia_output_surface.h components/viz/service/display/skia_output_surface.h
+index af350b87ab3a4..5ead658118c92 100644
+--- components/viz/service/display/skia_output_surface.h
++++ components/viz/service/display/skia_output_surface.h
+@@ -34,6 +34,10 @@ namespace gfx {
+ class ColorSpace;
+ }  // namespace gfx
+ 
++namespace gpu {
++class SharedImageInterface;
++}
++
+ namespace viz {
+ 
+ class OverlayCandidate;
+@@ -198,6 +202,9 @@ class VIZ_SERVICE_EXPORT SkiaOutputSurface : public OutputSurface,
+   // the GPU main thread.
+   virtual gpu::SyncToken Flush() = 0;
+ 
++  // Only used for creating and destroying shared images for render passes
++  virtual gpu::SharedImageInterface* GetSharedImageInterface() = 0;
++
+   // Set the number of frame buffers to use when
+   // `supports_dynamic_frame_buffer_allocation` is true. `n` must satisfy
+   // 0 < n <= capabilities_.number_of_buffers.
+diff --git components/viz/service/display_embedder/skia_output_surface_impl.cc components/viz/service/display_embedder/skia_output_surface_impl.cc
+index d535944fd6d95..0b86ea49bd165 100644
+--- components/viz/service/display_embedder/skia_output_surface_impl.cc
++++ components/viz/service/display_embedder/skia_output_surface_impl.cc
+@@ -1216,6 +1216,10 @@ base::ScopedClosureRunner SkiaOutputSurfaceImpl::GetCacheBackBufferCb() {
+   return dependency_->CacheGLSurface(impl_on_gpu_->gl_surface());
+ }
+ 
++gpu::SharedImageInterface* SkiaOutputSurfaceImpl::GetSharedImageInterface() {
++  return display_compositor_controller_->shared_image_interface();
++}
++
+ void SkiaOutputSurfaceImpl::AddContextLostObserver(
+     ContextLostObserver* observer) {
+   observers_.AddObserver(observer);
+diff --git components/viz/service/display_embedder/skia_output_surface_impl.h components/viz/service/display_embedder/skia_output_surface_impl.h
+index bd50e4e687e87..c1ee41dba2212 100644
+--- components/viz/service/display_embedder/skia_output_surface_impl.h
++++ components/viz/service/display_embedder/skia_output_surface_impl.h
+@@ -144,6 +144,7 @@ class VIZ_SERVICE_EXPORT SkiaOutputSurfaceImpl : public SkiaOutputSurface {
+   void AddContextLostObserver(ContextLostObserver* observer) override;
+   void RemoveContextLostObserver(ContextLostObserver* observer) override;
+   void PreserveChildSurfaceControls() override;
++  gpu::SharedImageInterface* GetSharedImageInterface() override;
+   gpu::SyncToken Flush() override;
+   bool EnsureMinNumberOfBuffers(int n) override;
+   gpu::Mailbox CreateSharedImage(ResourceFormat format,
+diff --git components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider_impl.cc components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider_impl.cc
+index 274ef78dd4ca3..68e762a8671aa 100644
+--- components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider_impl.cc
++++ components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider_impl.cc
+@@ -33,7 +33,6 @@ class GmbVideoFramePoolContext
+                                std::move(on_context_lost))) {
+     DETACH_FROM_SEQUENCE(gpu_sequence_checker_);
+ 
+-    // TODO(vikassoni): Verify this is the right GPU thread/sequence for DrDC.
+     sequence_ = std::make_unique<gpu::SchedulerSequence>(
+         gpu_service_->GetGpuScheduler(), gpu_service_->main_runner(),
+         /*target_thread_is_always_available=*/true);
+@@ -117,7 +116,7 @@ class GmbVideoFramePoolContext
+         gpu_service_->gpu_driver_bug_workarounds(),
+         gpu_service_->gpu_feature_info(), shared_context_state_.get(),
+         gpu_service_->shared_image_manager(), gpu_service_->gpu_image_factory(),
+-        /*is_for_display_compositor=*/false);
++        shared_context_state_->memory_tracker());
+     DCHECK(sii_in_process_);
+ 
+     initialized_ = true;
+diff --git components/viz/test/fake_skia_output_surface.h components/viz/test/fake_skia_output_surface.h
+index 2ab2739342131..75008773442f1 100644
+--- components/viz/test/fake_skia_output_surface.h
++++ components/viz/test/fake_skia_output_surface.h
+@@ -98,6 +98,7 @@ class FakeSkiaOutputSurface : public SkiaOutputSurface {
+                   const gpu::Mailbox& mailbox) override;
+   void AddContextLostObserver(ContextLostObserver* observer) override;
+   void RemoveContextLostObserver(ContextLostObserver* observer) override;
++  gpu::SharedImageInterface* GetSharedImageInterface() override;
+   gpu::SyncToken Flush() override;
+   bool EnsureMinNumberOfBuffers(int n) override;
+   void PreserveChildSurfaceControls() override {}
+@@ -123,8 +124,6 @@ class FakeSkiaOutputSurface : public SkiaOutputSurface {
+       sk_sp<SkColorSpace> color_space,
+       bool raw_draw_if_possible) override;
+ 
+-  gpu::SharedImageInterface* GetSharedImageInterface();
+-
+   // If set true, callbacks triggering will be in a reverse order as SignalQuery
+   // calls.
+   void SetOutOfOrderCallbacks(bool out_of_order_callbacks);
+diff --git gpu/command_buffer/service/display_compositor_memory_and_task_controller_on_gpu.cc gpu/command_buffer/service/display_compositor_memory_and_task_controller_on_gpu.cc
+index 4918284e5a7dd..11420501517b2 100644
+--- gpu/command_buffer/service/display_compositor_memory_and_task_controller_on_gpu.cc
++++ gpu/command_buffer/service/display_compositor_memory_and_task_controller_on_gpu.cc
+@@ -42,10 +42,43 @@ DisplayCompositorMemoryAndTaskControllerOnGpu::
+       sync_point_manager_(sync_point_manager),
+       gpu_preferences_(gpu_preferences),
+       gpu_driver_bug_workarounds_(gpu_driver_bug_workarounds),
+-      gpu_feature_info_(gpu_feature_info) {
++      gpu_feature_info_(gpu_feature_info),
++      should_have_memory_tracker_(true) {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(gpu_sequence_checker_);
+ }
+ 
++// Used for InProcessCommandBuffer.
++DisplayCompositorMemoryAndTaskControllerOnGpu::
++    DisplayCompositorMemoryAndTaskControllerOnGpu(
++        CommandBufferTaskExecutor* task_executor,
++        ImageFactory* image_factory)
++    : shared_context_state_(task_executor->GetSharedContextState()),
++      command_buffer_id_(GenNextCommandBufferId()),
++      mailbox_manager_(task_executor->mailbox_manager()),
++      image_factory_(image_factory),
++      shared_image_manager_(task_executor->shared_image_manager()),
++      sync_point_manager_(task_executor->sync_point_manager()),
++      gpu_preferences_(task_executor->gpu_preferences()),
++      gpu_driver_bug_workarounds_(
++          GpuDriverBugWorkarounds(task_executor->gpu_feature_info()
++                                      .enabled_gpu_driver_bug_workarounds)),
++      gpu_feature_info_(task_executor->gpu_feature_info()) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(gpu_sequence_checker_);
++
++  // Android WebView won't have a memory tracker.
++  if (task_executor->ShouldCreateMemoryTracker()) {
++    should_have_memory_tracker_ = true;
++    memory_tracker_ = std::make_unique<GpuCommandBufferMemoryTracker>(
++        command_buffer_id_,
++        base::trace_event::MemoryDumpManager::GetInstance()
++            ->GetTracingProcessId(),
++        base::ThreadTaskRunnerHandle::Get(),
++        /* obserer=*/nullptr);
++  } else {
++    should_have_memory_tracker_ = false;
++  }
++}
++
+ DisplayCompositorMemoryAndTaskControllerOnGpu::
+     ~DisplayCompositorMemoryAndTaskControllerOnGpu() {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(gpu_sequence_checker_);
+@@ -53,8 +86,13 @@ DisplayCompositorMemoryAndTaskControllerOnGpu::
+ 
+ MemoryTracker* DisplayCompositorMemoryAndTaskControllerOnGpu::memory_tracker()
+     const {
+-  DCHECK(shared_context_state_);
+-  return shared_context_state_->memory_tracker();
++  if (!should_have_memory_tracker_)
++    return nullptr;
++
++  if (memory_tracker_)
++    return memory_tracker_.get();
++  else
++    return shared_context_state_->memory_tracker();
+ }
+ 
+ // Static
+diff --git gpu/command_buffer/service/display_compositor_memory_and_task_controller_on_gpu.h gpu/command_buffer/service/display_compositor_memory_and_task_controller_on_gpu.h
+index 1ffc7e538073f..b9b1dd7ca6f1d 100644
+--- gpu/command_buffer/service/display_compositor_memory_and_task_controller_on_gpu.h
++++ gpu/command_buffer/service/display_compositor_memory_and_task_controller_on_gpu.h
+@@ -16,6 +16,7 @@
+ #include "gpu/ipc/common/command_buffer_id.h"
+ 
+ namespace gpu {
++class CommandBufferTaskExecutor;
+ class ImageFactory;
+ class MailboxManager;
+ class SyncPointManager;
+@@ -28,6 +29,7 @@ struct GpuPreferences;
+ // compositor.
+ class GPU_GLES2_EXPORT DisplayCompositorMemoryAndTaskControllerOnGpu {
+  public:
++  // Used for SkiaRenderer.
+   DisplayCompositorMemoryAndTaskControllerOnGpu(
+       scoped_refptr<SharedContextState> shared_context_state,
+       MailboxManager* mailbox_manager,
+@@ -37,6 +39,10 @@ class GPU_GLES2_EXPORT DisplayCompositorMemoryAndTaskControllerOnGpu {
+       const GpuPreferences& gpu_preferences,
+       const GpuDriverBugWorkarounds& gpu_driver_bug_workarounds,
+       const GpuFeatureInfo& gpu_feature_info);
++  // Used for InProcessCommandBuffer.
++  DisplayCompositorMemoryAndTaskControllerOnGpu(
++      CommandBufferTaskExecutor* task_executor,
++      ImageFactory* image_factory);
+   DisplayCompositorMemoryAndTaskControllerOnGpu(
+       const DisplayCompositorMemoryAndTaskControllerOnGpu&) = delete;
+   DisplayCompositorMemoryAndTaskControllerOnGpu& operator=(
+@@ -79,6 +85,10 @@ class GPU_GLES2_EXPORT DisplayCompositorMemoryAndTaskControllerOnGpu {
+   GpuDriverBugWorkarounds gpu_driver_bug_workarounds_;
+   const GpuFeatureInfo& gpu_feature_info_;
+ 
++  // Only needed for InProcessCommandBuffer.
++  bool should_have_memory_tracker_ = false;
++  std::unique_ptr<MemoryTracker> memory_tracker_;
++
+   SEQUENCE_CHECKER(gpu_sequence_checker_);
+ };
+ 
+diff --git gpu/command_buffer/service/shared_image_interface_in_process.cc gpu/command_buffer/service/shared_image_interface_in_process.cc
+index bc3cb2aef07e1..e6751b4b3e820 100644
+--- gpu/command_buffer/service/shared_image_interface_in_process.cc
++++ gpu/command_buffer/service/shared_image_interface_in_process.cc
+@@ -33,6 +33,7 @@ struct SharedImageInterfaceInProcess::SetUpOnGpuParams {
+   const raw_ptr<gpu::SharedContextState> context_state;
+   const raw_ptr<SharedImageManager> shared_image_manager;
+   const raw_ptr<ImageFactory> image_factory;
++  const raw_ptr<MemoryTracker> memory_tracker;
+   const bool is_for_display_compositor;
+ 
+   SetUpOnGpuParams(const GpuPreferences& gpu_preferences,
+@@ -41,6 +42,7 @@ struct SharedImageInterfaceInProcess::SetUpOnGpuParams {
+                    gpu::SharedContextState* context_state,
+                    SharedImageManager* shared_image_manager,
+                    ImageFactory* image_factory,
++                   MemoryTracker* memory_tracker,
+                    bool is_for_display_compositor)
+       : gpu_preferences(gpu_preferences),
+         gpu_workarounds(gpu_workarounds),
+@@ -48,6 +50,7 @@ struct SharedImageInterfaceInProcess::SetUpOnGpuParams {
+         context_state(context_state),
+         shared_image_manager(shared_image_manager),
+         image_factory(image_factory),
++        memory_tracker(memory_tracker),
+         is_for_display_compositor(is_for_display_compositor) {}
+ 
+   ~SetUpOnGpuParams() = default;
+@@ -58,7 +61,8 @@ struct SharedImageInterfaceInProcess::SetUpOnGpuParams {
+ 
+ SharedImageInterfaceInProcess::SharedImageInterfaceInProcess(
+     SingleTaskSequence* task_sequence,
+-    DisplayCompositorMemoryAndTaskControllerOnGpu* display_controller)
++    DisplayCompositorMemoryAndTaskControllerOnGpu* display_controller,
++    raw_ptr<CommandBufferHelper> command_buffer_helper)
+     : SharedImageInterfaceInProcess(
+           task_sequence,
+           display_controller->sync_point_manager(),
+@@ -68,7 +72,9 @@ SharedImageInterfaceInProcess::SharedImageInterfaceInProcess(
+           display_controller->shared_context_state(),
+           display_controller->shared_image_manager(),
+           display_controller->image_factory(),
+-          /*is_for_display_compositor=*/true) {}
++          display_controller->memory_tracker(),
++          /*is_for_display_compositor=*/true,
++          command_buffer_helper) {}
+ 
+ SharedImageInterfaceInProcess::SharedImageInterfaceInProcess(
+     SingleTaskSequence* task_sequence,
+@@ -79,19 +85,23 @@ SharedImageInterfaceInProcess::SharedImageInterfaceInProcess(
+     gpu::SharedContextState* context_state,
+     SharedImageManager* shared_image_manager,
+     ImageFactory* image_factory,
+-    bool is_for_display_compositor)
++    MemoryTracker* memory_tracker,
++    bool is_for_display_compositor,
++    raw_ptr<CommandBufferHelper> command_buffer_helper)
+     : task_sequence_(task_sequence),
+       command_buffer_id_(
+           DisplayCompositorMemoryAndTaskControllerOnGpu::NextCommandBufferId()),
++      command_buffer_helper_(command_buffer_helper),
+       shared_image_manager_(shared_image_manager),
+       sync_point_manager_(sync_point_manager) {
+   DETACH_FROM_SEQUENCE(gpu_sequence_checker_);
+   task_sequence_->ScheduleTask(
+-      base::BindOnce(
+-          &SharedImageInterfaceInProcess::SetUpOnGpu, base::Unretained(this),
+-          std::make_unique<SetUpOnGpuParams>(
+-              gpu_preferences, gpu_workarounds, gpu_feature_info, context_state,
+-              shared_image_manager, image_factory, is_for_display_compositor)),
++      base::BindOnce(&SharedImageInterfaceInProcess::SetUpOnGpu,
++                     base::Unretained(this),
++                     std::make_unique<SetUpOnGpuParams>(
++                         gpu_preferences, gpu_workarounds, gpu_feature_info,
++                         context_state, shared_image_manager, image_factory,
++                         memory_tracker, is_for_display_compositor)),
+       {});
+ }
+ 
+@@ -117,8 +127,7 @@ void SharedImageInterfaceInProcess::SetUpOnGpu(
+             params->gpu_preferences, params->gpu_workarounds,
+             params->gpu_feature_info, params->context_state,
+             params->shared_image_manager, params->image_factory,
+-            params->context_state->memory_tracker(),
+-            params->is_for_display_compositor);
++            params->memory_tracker, params->is_for_display_compositor);
+         return shared_image_factory;
+       },
+       std::move(params));
+@@ -225,7 +234,10 @@ void SharedImageInterfaceInProcess::CreateSharedImageOnGpuThread(
+   if (!shared_image_factory_->CreateSharedImage(
+           mailbox, si_format, size, color_space, surface_origin, alpha_type,
+           surface_handle, usage)) {
+-    context_state_->MarkContextLost();
++    if (command_buffer_helper_) {
++      // Signal errors by losing the command buffer.
++      command_buffer_helper_->SetError();
++    }
+     return;
+   }
+   sync_point_client_state_->ReleaseFenceSync(sync_token.release_count());
+@@ -280,9 +292,12 @@ void SharedImageInterfaceInProcess::CreateSharedImageWithDataOnGpuThread(
+   DCHECK(shared_image_factory_);
+   auto si_format = viz::SharedImageFormat::SinglePlane(format);
+   if (!shared_image_factory_->CreateSharedImage(
+-          mailbox, si_format, size, color_space, surface_origin, alpha_type,
+-          usage, pixel_data)) {
+-    context_state_->MarkContextLost();
++          mailbox, si_format, size, color_space, surface_origin, alpha_type, usage,
++          pixel_data)) {
++    if (command_buffer_helper_) {
++      // Signal errors by losing the command buffer.
++      command_buffer_helper_->SetError();
++    }
+     return;
+   }
+   sync_point_client_state_->ReleaseFenceSync(sync_token.release_count());
+@@ -359,7 +374,10 @@ void SharedImageInterfaceInProcess::CreateGMBSharedImageOnGpuThread(
+           mailbox, kDisplayCompositorClientId, std::move(handle), format, plane,
+           surface_handle, size, color_space, surface_origin, alpha_type,
+           usage)) {
+-    context_state_->MarkContextLost();
++    if (command_buffer_helper_) {
++      // Signal errors by losing the command buffer.
++      command_buffer_helper_->SetError();
++    }
+     return;
+   }
+   sync_point_client_state_->ReleaseFenceSync(sync_token.release_count());
+@@ -431,7 +449,10 @@ void SharedImageInterfaceInProcess::UpdateSharedImageOnGpuThread(
+ 
+   if (!shared_image_factory_ ||
+       !shared_image_factory_->UpdateSharedImage(mailbox)) {
+-    context_state_->MarkContextLost();
++    if (command_buffer_helper_) {
++      // Signal errors by losing the command buffer.
++      command_buffer_helper_->SetError();
++    }
+     return;
+   }
+   sync_point_client_state_->ReleaseFenceSync(sync_token.release_count());
+@@ -457,7 +478,10 @@ void SharedImageInterfaceInProcess::DestroySharedImageOnGpuThread(
+ 
+   if (!shared_image_factory_ ||
+       !shared_image_factory_->DestroySharedImage(mailbox)) {
+-    context_state_->MarkContextLost();
++    if (command_buffer_helper_) {
++      // Signal errors by losing the command buffer.
++      command_buffer_helper_->SetError();
++    }
+   }
+ }
+ 
+@@ -502,10 +526,23 @@ scoped_refptr<gfx::NativePixmap> SharedImageInterfaceInProcess::GetNativePixmap(
+   return shared_image_manager_->GetNativePixmap(mailbox);
+ }
+ 
++void SharedImageInterfaceInProcess::WrapTaskWithGpuUrl(base::OnceClosure task) {
++  if (command_buffer_helper_) {
++    command_buffer_helper_->WrapTaskWithGpuCheck(std::move(task));
++  } else {
++    std::move(task).Run();
++  }
++}
++
+ void SharedImageInterfaceInProcess::ScheduleGpuTask(
+     base::OnceClosure task,
+     std::vector<SyncToken> sync_token_fences) {
+-  task_sequence_->ScheduleTask(std::move(task), std::move(sync_token_fences));
++  base::OnceClosure gpu_task =
++      base::BindOnce(&SharedImageInterfaceInProcess::WrapTaskWithGpuUrl,
++                     base::Unretained(this), std::move(task));
++
++  task_sequence_->ScheduleTask(std::move(gpu_task),
++                               std::move(sync_token_fences));
+ }
+ 
+ }  // namespace gpu
+diff --git gpu/command_buffer/service/shared_image_interface_in_process.h gpu/command_buffer/service/shared_image_interface_in_process.h
+index 1bd4842afa31b..5404ec1d8e293 100644
+--- gpu/command_buffer/service/shared_image_interface_in_process.h
++++ gpu/command_buffer/service/shared_image_interface_in_process.h
+@@ -29,14 +29,24 @@ struct GpuPreferences;
+ class GpuDriverBugWorkarounds;
+ struct GpuFeatureInfo;
+ class ImageFactory;
++class MemoryTracker;
+ struct SyncToken;
+ 
+ // This is an implementation of the SharedImageInterface to be used on the viz
+ // compositor thread. This class also implements the corresponding parts
+ // happening on gpu thread.
++// TODO(weiliangc): Currently this is implemented as backed by
++// InProcessCommandBuffer. Add constructor for using with SkiaRenderer.
+ class GPU_GLES2_EXPORT SharedImageInterfaceInProcess
+     : public SharedImageInterface {
+  public:
++  // This is only implemented by InProcessCommandBuffer.
++  class GPU_GLES2_EXPORT CommandBufferHelper {
++   public:
++    virtual void SetError() = 0;
++    virtual void WrapTaskWithGpuCheck(base::OnceClosure task) = 0;
++  };
++
+   // The callers must guarantee that the instances passed via pointers are kept
+   // alive for as long as the instance of this class is alive. This can be
+   // achieved by ensuring that the ownership of the created
+@@ -44,21 +54,25 @@ class GPU_GLES2_EXPORT SharedImageInterfaceInProcess
+   // pointers.
+   SharedImageInterfaceInProcess(
+       SingleTaskSequence* task_sequence,
+-      DisplayCompositorMemoryAndTaskControllerOnGpu* display_controller);
++      DisplayCompositorMemoryAndTaskControllerOnGpu* display_controller,
++      raw_ptr<CommandBufferHelper> command_buffer_helper);
+   // The callers must guarantee that the instances passed via pointers are kept
+   // alive for as long as the instance of this class is alive. This can be
+   // achieved by ensuring that the ownership of the created
+   // SharedImageInterfaceInProcess is the same as the ownership of the passed in
+   // pointers.
+-  SharedImageInterfaceInProcess(SingleTaskSequence* task_sequence,
+-                                SyncPointManager* sync_point_manager,
+-                                const GpuPreferences& gpu_preferences,
+-                                const GpuDriverBugWorkarounds& gpu_workarounds,
+-                                const GpuFeatureInfo& gpu_feature_info,
+-                                gpu::SharedContextState* context_state,
+-                                SharedImageManager* shared_image_manager,
+-                                ImageFactory* image_factory,
+-                                bool is_for_display_compositor);
++  SharedImageInterfaceInProcess(
++      SingleTaskSequence* task_sequence,
++      SyncPointManager* sync_point_manager,
++      const GpuPreferences& gpu_preferences,
++      const GpuDriverBugWorkarounds& gpu_workarounds,
++      const GpuFeatureInfo& gpu_feature_info,
++      gpu::SharedContextState* context_state,
++      SharedImageManager* shared_image_manager,
++      ImageFactory* image_factory,
++      MemoryTracker* tracker,
++      bool is_for_display_compositor = false,
++      raw_ptr<CommandBufferHelper> command_buffer_helper = nullptr);
+ 
+   SharedImageInterfaceInProcess(const SharedImageInterfaceInProcess&) = delete;
+   SharedImageInterfaceInProcess& operator=(
+@@ -230,6 +244,7 @@ class GPU_GLES2_EXPORT SharedImageInterfaceInProcess
+   // SharedImageInterfaceInProcess.
+   raw_ptr<SingleTaskSequence> task_sequence_;
+   const CommandBufferId command_buffer_id_;
++  raw_ptr<CommandBufferHelper> command_buffer_helper_;
+ 
+   base::OnceCallback<std::unique_ptr<SharedImageFactory>()> create_factory_;
+ 
+diff --git gpu/ipc/in_process_command_buffer.cc gpu/ipc/in_process_command_buffer.cc
+index 0d9a6b39ef58d..b314ce8d30103 100644
+--- gpu/ipc/in_process_command_buffer.cc
++++ gpu/ipc/in_process_command_buffer.cc
+@@ -97,12 +97,19 @@ class ScopedEvent {
+ 
+ }  // namespace
+ 
++void InProcessCommandBuffer::SetError() {
++  // Signal errors by losing the command buffer.
++  command_buffer_->SetParseError(error::kLostContext);
++}
++
++void InProcessCommandBuffer::WrapTaskWithGpuCheck(base::OnceClosure task) {
++  RunTaskOnGpuThread(std::move(task));
++}
++
+ InProcessCommandBuffer::InProcessCommandBuffer(
+     CommandBufferTaskExecutor* task_executor,
+     const GURL& active_url)
+-    : command_buffer_id_(
+-          DisplayCompositorMemoryAndTaskControllerOnGpu::NextCommandBufferId()),
+-      active_url_(active_url),
++    : active_url_(active_url),
+       flush_event_(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                    base::WaitableEvent::InitialState::NOT_SIGNALED),
+       task_executor_(task_executor),
+@@ -210,12 +217,7 @@ gpu::ContextResult InProcessCommandBuffer::Initialize(
+   if (result == gpu::ContextResult::kSuccess) {
+     capabilities_ = capabilities;
+     shared_image_interface_ = std::make_unique<SharedImageInterfaceInProcess>(
+-        task_sequence_, task_executor_->sync_point_manager(),
+-        task_executor_->gpu_preferences(),
+-        context_group_->feature_info()->workarounds(),
+-        task_executor_->gpu_feature_info(), context_state_.get(),
+-        task_executor_->shared_image_manager(), image_factory,
+-        /*is_for_display_compositor=*/false);
++        task_sequence_, gpu_dependency_.get(), this);
+   }
+ 
+   return result;
+@@ -227,6 +229,10 @@ gpu::ContextResult InProcessCommandBuffer::InitializeOnGpuThread(
+   TRACE_EVENT0("gpu", "InProcessCommandBuffer::InitializeOnGpuThread");
+   UpdateActiveUrl();
+ 
++  gpu_dependency_ =
++      std::make_unique<DisplayCompositorMemoryAndTaskControllerOnGpu>(
++          task_executor_, params.image_factory);
++
+   GpuDriverBugWorkarounds workarounds(
+       task_executor_->gpu_feature_info().enabled_gpu_driver_bug_workarounds);
+ 
+@@ -237,7 +243,7 @@ gpu::ContextResult InProcessCommandBuffer::InitializeOnGpuThread(
+         base::trace_event::MemoryDumpManager::GetInstance()
+             ->GetTracingProcessId();
+     memory_tracker = std::make_unique<GpuCommandBufferMemoryTracker>(
+-        GetCommandBufferID(), client_tracing_id,
++        gpu_dependency_->command_buffer_id(), client_tracing_id,
+         base::ThreadTaskRunnerHandle::Get(), /* obserer=*/nullptr);
+   }
+ 
+@@ -274,7 +280,7 @@ gpu::ContextResult InProcessCommandBuffer::InitializeOnGpuThread(
+   }
+ 
+   command_buffer_ = std::make_unique<CommandBufferService>(
+-      this, context_group_->memory_tracker());
++      this, gpu_dependency_->memory_tracker());
+ 
+   context_state_ = task_executor_->GetSharedContextState();
+ 
+@@ -315,7 +321,7 @@ gpu::ContextResult InProcessCommandBuffer::InitializeOnGpuThread(
+     std::unique_ptr<webgpu::WebGPUDecoder> webgpu_decoder(
+         webgpu::WebGPUDecoder::Create(
+             this, command_buffer_.get(), task_executor_->shared_image_manager(),
+-            context_group_->memory_tracker(), task_executor_->outputter(),
++            gpu_dependency_->memory_tracker(), task_executor_->outputter(),
+             task_executor_->gpu_preferences(), context_state_));
+     gpu::ContextResult result =
+         webgpu_decoder->Initialize(task_executor_->gpu_feature_info());
+@@ -350,7 +356,7 @@ gpu::ContextResult InProcessCommandBuffer::InitializeOnGpuThread(
+       decoder_.reset(raster::RasterDecoder::Create(
+           this, command_buffer_.get(), task_executor_->outputter(),
+           task_executor_->gpu_feature_info(), task_executor_->gpu_preferences(),
+-          context_group_->memory_tracker(),
++          gpu_dependency_->memory_tracker(),
+           task_executor_->shared_image_manager(), params.image_factory,
+           context_state_, true /*is_privileged*/));
+     } else {
+@@ -519,6 +525,8 @@ bool InProcessCommandBuffer::DestroyOnGpuThread() {
+     context_state_->MakeCurrent(nullptr);
+   context_state_ = nullptr;
+ 
++  gpu_dependency_.reset();
++
+   return true;
+ }
+ 
+@@ -993,7 +1001,7 @@ CommandBufferNamespace InProcessCommandBuffer::GetNamespaceID() const {
+ }
+ 
+ CommandBufferId InProcessCommandBuffer::GetCommandBufferID() const {
+-  return command_buffer_id_;
++  return gpu_dependency_->command_buffer_id();
+ }
+ 
+ void InProcessCommandBuffer::FlushPendingWork() {
+diff --git gpu/ipc/in_process_command_buffer.h gpu/ipc/in_process_command_buffer.h
+index c044c28714e8d..98b0f509093c9 100644
+--- gpu/ipc/in_process_command_buffer.h
++++ gpu/ipc/in_process_command_buffer.h
+@@ -89,7 +89,8 @@ class GL_IN_PROCESS_CONTEXT_EXPORT InProcessCommandBuffer
+     : public CommandBuffer,
+       public GpuControl,
+       public CommandBufferServiceClient,
+-      public DecoderClient {
++      public DecoderClient,
++      public SharedImageInterfaceInProcess::CommandBufferHelper {
+  public:
+   InProcessCommandBuffer(CommandBufferTaskExecutor* task_executor,
+                          const GURL& active_url);
+@@ -176,6 +177,10 @@ class GL_IN_PROCESS_CONTEXT_EXPORT InProcessCommandBuffer
+ 
+   gpu::SharedImageInterface* GetSharedImageInterface() const;
+ 
++  // SharedImageInterfaceInProcess::CommandBufferHelper implementation:
++  void SetError() override;
++  void WrapTaskWithGpuCheck(base::OnceClosure task) override;
++
+  private:
+   struct InitializeOnGpuThreadParams {
+     const ContextCreationAttribs& attribs;
+@@ -260,11 +265,12 @@ class GL_IN_PROCESS_CONTEXT_EXPORT InProcessCommandBuffer
+ 
+   void HandleReturnDataOnOriginThread(std::vector<uint8_t> data);
+ 
+-  const CommandBufferId command_buffer_id_;
+   const ContextUrl active_url_;
+ 
+   // Members accessed on the gpu thread (possibly with the exception of
+   // creation):
++  std::unique_ptr<DisplayCompositorMemoryAndTaskControllerOnGpu>
++      gpu_dependency_;
+   bool use_virtualized_gl_context_ = false;
+   raw_ptr<raster::GrShaderCache> gr_shader_cache_ = nullptr;
+   scoped_refptr<base::SingleThreadTaskRunner> origin_task_runner_;
+-- 
+2.36.1.windows.1
+
