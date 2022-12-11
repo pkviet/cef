@@ -1,0 +1,1185 @@
+From a7c117d30149f806e164197844f8b329b42f35f8 Mon Sep 17 00:00:00 2001
+From: pkv <pkv@obsproject.com>
+Date: Sun, 4 Dec 2022 14:32:25 +0100
+Subject: [PATCH] Revert "[Graphics] Remove CHROMIUM_texture_storage_image"
+
+This reverts commit 4ae0cfaa1c58fbd90b6132c0be4552c231669df6.
+---
+ .../common/resources/resource_format_utils.h  |  3 +-
+ .../CHROMIUM_texture_storage_image.txt        | 74 ++++++++++++++++
+ gpu/GLES2/gl2chromium_autogen.h               |  1 +
+ gpu/GLES2/gl2extchromium.h                    | 17 ++++
+ gpu/command_buffer/build_cmd_buffer_lib.py    |  2 +-
+ gpu/command_buffer/build_gles2_cmd_buffer.py  | 16 ++++
+ .../client/gles2_c_lib_autogen.h              | 12 +++
+ .../client/gles2_cmd_helper_autogen.h         | 11 +++
+ .../client/gles2_implementation_autogen.h     |  6 ++
+ .../gles2_implementation_impl_autogen.h       | 29 +++++++
+ .../gles2_implementation_unittest_autogen.h   | 18 ++++
+ .../client/gles2_interface_autogen.h          |  5 ++
+ .../client/gles2_interface_stub_autogen.h     |  5 ++
+ .../gles2_interface_stub_impl_autogen.h       |  5 ++
+ .../gles2_trace_implementation_autogen.h      |  5 ++
+ .../gles2_trace_implementation_impl_autogen.h | 10 +++
+ .../raster_implementation_gles_unittest.cc    |  6 ++
+ .../common/gles2_cmd_format_autogen.h         | 55 ++++++++++++
+ .../common/gles2_cmd_format_test_autogen.h    | 16 ++++
+ .../common/gles2_cmd_ids_autogen.h            | 43 +++++-----
+ .../common/gles2_cmd_utils_autogen.h          |  1 +
+ .../gles2_cmd_utils_implementation_autogen.h  | 12 +++
+ .../common/raster_cmd_format_autogen.h        |  2 +
+ .../common/webgpu_cmd_format_autogen.h        |  2 +
+ .../gles2_cmd_buffer_functions.txt            |  3 +
+ gpu/command_buffer/service/feature_info.cc    |  7 +-
+ gpu/command_buffer/service/feature_info.h     |  4 +-
+ gpu/command_buffer/service/gl_utils.cc        | 10 +++
+ gpu/command_buffer/service/gl_utils.h         |  1 +
+ .../service/gles2_cmd_decoder.cc              | 85 ++++++++++++++++++-
+ .../service/gles2_cmd_decoder_autogen.h       | 40 +++++++++
+ .../service/gles2_cmd_decoder_passthrough.cc  |  8 +-
+ ..._cmd_decoder_passthrough_doer_prototypes.h |  5 ++
+ .../gles2_cmd_decoder_passthrough_doers.cc    | 59 ++++++++++++-
+ ...md_decoder_passthrough_handlers_autogen.cc | 23 +++++
+ .../tests/gl_texture_storage_unittest.cc      | 20 +++++
+ ui/gl/gl_bindings.h                           |  3 +
+ ui/gl/gl_enums_implementation_autogen.h       |  4 +
+ 38 files changed, 591 insertions(+), 37 deletions(-)
+ create mode 100644 gpu/GLES2/extensions/CHROMIUM/CHROMIUM_texture_storage_image.txt
+
+diff --git components/viz/common/resources/resource_format_utils.h components/viz/common/resources/resource_format_utils.h
+index fe5e1bbec8d6b..73131947dbb26 100644
+--- components/viz/common/resources/resource_format_utils.h
++++ components/viz/common/resources/resource_format_utils.h
+@@ -54,7 +54,8 @@ VIZ_RESOURCE_FORMAT_EXPORT unsigned int TextureStorageFormat(
+     ResourceFormat format,
+     bool use_angle_rgbx_format);
+ 
+-// Returns whether the format can be used with GpuMemoryBuffer texture storage.
++// Returns whether the format can be used with GpuMemoryBuffer texture storage,
++// allocated through TexStorage2DImageCHROMIUM.
+ VIZ_RESOURCE_FORMAT_EXPORT bool IsGpuMemoryBufferFormatSupported(
+     ResourceFormat format);
+ 
+diff --git gpu/GLES2/extensions/CHROMIUM/CHROMIUM_texture_storage_image.txt gpu/GLES2/extensions/CHROMIUM/CHROMIUM_texture_storage_image.txt
+new file mode 100644
+index 0000000000000..39d0bf9946444
+--- /dev/null
++++ gpu/GLES2/extensions/CHROMIUM/CHROMIUM_texture_storage_image.txt
+@@ -0,0 +1,74 @@
++Name
++
++    CHROMIUM_texture_storage_image
++
++Name Strings
++
++    GL_CHROMIUM_texture_storage_image
++
++Contributors
++
++    Antoine Labour, Google
++    John Bauman, Google
++    Sunny Sachanandani, Google
++
++Contact
++
++    Sunny Sachanandani, Google (sunnyps 'at' google.com)
++
++Status
++
++    In Progress
++
++Version
++
++    Last Modified Date: September 29, 2017
++    Version:            1
++
++Number
++
++    OpenGL ES Extension #???
++
++Dependencies
++
++    This extension is written against the OpenGL ES 2.0 Specification.
++    This extension depends on EXT_texture_storage.
++
++Overview
++
++    This allows clients to specify alternative texture backings which support
++    scanout and can be used as hardware overlays.
++
++New Tokens
++
++    Accepted by the <bufferusage> parameter of glTexStorage2DImageCHROMIUM:
++    GL_SCANOUT_CHROMIUM 0x6000
++
++New Procedures and Functions
++
++    The command
++
++        void TexStorage2DImageCHROMIUM(enum target, enum internalformat,
++                                       enum bufferusage, sizei width,
++                                       sizei height);
++
++    specifies that the (single) level of the texture is backed by a platform
++    image buffer with the specified usage. The only supported buffer usage is
++    SCANOUT_CHROMIUM which allows the texture to be used for scanout and in
++    hardware overlays. The supported internal formats are RGBA8_OES,
++    BGRA8_EXT, RGBAF16_EXT, and R8_EXT.
++
++Errors
++
++    A context lost will result when this call fails, either because of an
++    invalid parameter value or because of a runtime error such as an out of
++    memory condition.
++
++Revision History
++
++    Rev.    Date      Author     Changes
++    ----  ----------- ---------  ----------------------------------------
++      1   19 Jun 2017 jbauman    Initial revision (as CHROMIUM_texture_buffer)
++      2   06 Oct 2017 sunnyps    Rewritten as CHROMIUM_texture_storage_image
++
++
+diff --git gpu/GLES2/gl2chromium_autogen.h gpu/GLES2/gl2chromium_autogen.h
+index 2e00bc1d6f298..77142db3b504a 100644
+--- gpu/GLES2/gl2chromium_autogen.h
++++ gpu/GLES2/gl2chromium_autogen.h
+@@ -354,6 +354,7 @@
+   GLES2_GET_FUN(UnlockDiscardableTextureCHROMIUM)
+ #define glLockDiscardableTextureCHROMIUM \
+   GLES2_GET_FUN(LockDiscardableTextureCHROMIUM)
++#define glTexStorage2DImageCHROMIUM GLES2_GET_FUN(TexStorage2DImageCHROMIUM)
+ #define glSetColorSpaceMetadataCHROMIUM \
+   GLES2_GET_FUN(SetColorSpaceMetadataCHROMIUM)
+ #define glWindowRectanglesEXT GLES2_GET_FUN(WindowRectanglesEXT)
+diff --git gpu/GLES2/gl2extchromium.h gpu/GLES2/gl2extchromium.h
+index 808417af6170a..1c79a5436e493 100644
+--- gpu/GLES2/gl2extchromium.h
++++ gpu/GLES2/gl2extchromium.h
+@@ -701,6 +701,23 @@ GL_APICALL void GL_APIENTRY glCoverageModulationCHROMIUM(GLenum components);
+ #define GL_TEXTURE_FILTERING_HINT_CHROMIUM 0x8AF0
+ #endif /* GL_CHROMIUM_texture_filtering_hint */
+ 
++#ifndef GL_CHROMIUM_texture_storage_image
++#define GL_CHROMIUM_texture_storage_image 1
++#ifdef GL_GLEXT_PROTOTYPES
++GL_APICALL void GL_APIENTRY glTexStorage2DImageCHROMIUM(GLenum target,
++                                                        GLenum internalformat,
++                                                        GLenum bufferusage,
++                                                        GLsizei width,
++                                                        GLsizei height);
++#endif
++typedef void(GL_APIENTRYP PFNGLTEXSTORAGE2DIMAGECHROMIUM)(GLenum target,
++                                                          GLenum internalformat,
++                                                          GLenum bufferusage,
++                                                          GLsizei width,
++                                                          GLsizei height);
++#define GL_SCANOUT_CHROMIUM 0x6000
++#endif /* GL_CHROMIUM_texture_storage_image */
++
+ #ifndef GL_CHROMIUM_color_space_metadata
+ #define GL_CHROMIUM_color_space_metadata 1
+ #ifdef GL_GLEXT_PROTOTYPES
+diff --git gpu/command_buffer/build_cmd_buffer_lib.py gpu/command_buffer/build_cmd_buffer_lib.py
+index 736bf55f8ba77..a87c8e7c820f3 100644
+--- gpu/command_buffer/build_cmd_buffer_lib.py
++++ gpu/command_buffer/build_cmd_buffer_lib.py
+@@ -6394,7 +6394,7 @@ class GLGenerator():
+     with CHeaderWriter(filename, self.year) as f:
+       # Forward declaration of a few enums used in constant argument
+       # to avoid including GL header files.
+-      enum_defines = {}
++      enum_defines = {'GL_SCANOUT_CHROMIUM': '0x6000'}
+       if 'FenceSync' in self.function_info:
+         enum_defines['GL_SYNC_GPU_COMMANDS_COMPLETE'] = '0x9117'
+       if 'ClientWaitSync' in self.function_info:
+diff --git gpu/command_buffer/build_gles2_cmd_buffer.py gpu/command_buffer/build_gles2_cmd_buffer.py
+index 184a6e7545ff0..b9bb0dfab56c9 100755
+--- gpu/command_buffer/build_gles2_cmd_buffer.py
++++ gpu/command_buffer/build_gles2_cmd_buffer.py
+@@ -1581,6 +1581,16 @@ _NAMED_TYPE_INFO = {
+       'GL_SYNC_FENCE',
+     ],
+   },
++  'ClientBufferUsage': {
++    'type': 'GLenum',
++    'is_complete': True,
++    'valid': [
++      'GL_SCANOUT_CHROMIUM',
++    ],
++    'invalid': [
++      'GL_NONE',
++    ],
++  },
+   'WindowRectanglesMode': {
+     'type': 'GLenum',
+     'is_complete': True,
+@@ -3939,6 +3949,12 @@ _FUNCTION_INFO = {
+     'client_test': False,
+     'extension': True,
+   },
++  'TexStorage2DImageCHROMIUM': {
++    'decoder_func': 'DoTexStorage2DImageCHROMIUM',
++    'unit_test': False,
++    'extension': 'CHROMIUM_texture_storage_image',
++    'extension_flag': 'chromium_texture_storage_image',
++  },
+   'SetColorSpaceMetadataCHROMIUM': {
+     'type': 'Custom',
+     'impl_func': False,
+diff --git gpu/command_buffer/client/gles2_c_lib_autogen.h gpu/command_buffer/client/gles2_c_lib_autogen.h
+index e9fed1d6a1329..feb9f6eb0b49c 100644
+--- gpu/command_buffer/client/gles2_c_lib_autogen.h
++++ gpu/command_buffer/client/gles2_c_lib_autogen.h
+@@ -1612,6 +1612,14 @@ void GL_APIENTRY GLES2UnlockDiscardableTextureCHROMIUM(GLuint texture_id) {
+ bool GL_APIENTRY GLES2LockDiscardableTextureCHROMIUM(GLuint texture_id) {
+   return gles2::GetGLContext()->LockDiscardableTextureCHROMIUM(texture_id);
+ }
++void GL_APIENTRY GLES2TexStorage2DImageCHROMIUM(GLenum target,
++                                                GLenum internalFormat,
++                                                GLenum bufferUsage,
++                                                GLsizei width,
++                                                GLsizei height) {
++  gles2::GetGLContext()->TexStorage2DImageCHROMIUM(target, internalFormat,
++                                                   bufferUsage, width, height);
++}
+ void GL_APIENTRY GLES2SetColorSpaceMetadataCHROMIUM(GLuint texture_id,
+                                                     GLcolorSpace color_space) {
+   gles2::GetGLContext()->SetColorSpaceMetadataCHROMIUM(texture_id, color_space);
+@@ -2991,6 +2999,10 @@ extern const NameToFunc g_gles2_function_table[] = {
+         reinterpret_cast<GLES2FunctionPointer>(
+             glLockDiscardableTextureCHROMIUM),
+     },
++    {
++        "glTexStorage2DImageCHROMIUM",
++        reinterpret_cast<GLES2FunctionPointer>(glTexStorage2DImageCHROMIUM),
++    },
+     {
+         "glSetColorSpaceMetadataCHROMIUM",
+         reinterpret_cast<GLES2FunctionPointer>(glSetColorSpaceMetadataCHROMIUM),
+diff --git gpu/command_buffer/client/gles2_cmd_helper_autogen.h gpu/command_buffer/client/gles2_cmd_helper_autogen.h
+index a3ef8aea03ebd..8b9959ed6067a 100644
+--- gpu/command_buffer/client/gles2_cmd_helper_autogen.h
++++ gpu/command_buffer/client/gles2_cmd_helper_autogen.h
+@@ -3075,6 +3075,17 @@ void LockDiscardableTextureCHROMIUM(GLuint texture_id) {
+   }
+ }
+ 
++void TexStorage2DImageCHROMIUM(GLenum target,
++                               GLenum internalFormat,
++                               GLsizei width,
++                               GLsizei height) {
++  gles2::cmds::TexStorage2DImageCHROMIUM* c =
++      GetCmdSpace<gles2::cmds::TexStorage2DImageCHROMIUM>();
++  if (c) {
++    c->Init(target, internalFormat, width, height);
++  }
++}
++
+ void SetColorSpaceMetadataCHROMIUM(GLuint texture_id,
+                                    GLuint shm_id,
+                                    GLuint shm_offset,
+diff --git gpu/command_buffer/client/gles2_implementation_autogen.h gpu/command_buffer/client/gles2_implementation_autogen.h
+index cbed00575816c..b43709080a618 100644
+--- gpu/command_buffer/client/gles2_implementation_autogen.h
++++ gpu/command_buffer/client/gles2_implementation_autogen.h
+@@ -1136,6 +1136,12 @@ void UnlockDiscardableTextureCHROMIUM(GLuint texture_id) override;
+ 
+ bool LockDiscardableTextureCHROMIUM(GLuint texture_id) override;
+ 
++void TexStorage2DImageCHROMIUM(GLenum target,
++                               GLenum internalFormat,
++                               GLenum bufferUsage,
++                               GLsizei width,
++                               GLsizei height) override;
++
+ void SetColorSpaceMetadataCHROMIUM(GLuint texture_id,
+                                    GLcolorSpace color_space) override;
+ 
+diff --git gpu/command_buffer/client/gles2_implementation_impl_autogen.h gpu/command_buffer/client/gles2_implementation_impl_autogen.h
+index a8586eb5cf9a9..cf588a7fe64a1 100644
+--- gpu/command_buffer/client/gles2_implementation_impl_autogen.h
++++ gpu/command_buffer/client/gles2_implementation_impl_autogen.h
+@@ -3415,6 +3415,35 @@ void GLES2Implementation::BlendBarrierKHR() {
+   CheckGLError();
+ }
+ 
++void GLES2Implementation::TexStorage2DImageCHROMIUM(GLenum target,
++                                                    GLenum internalFormat,
++                                                    GLenum bufferUsage,
++                                                    GLsizei width,
++                                                    GLsizei height) {
++  GPU_CLIENT_SINGLE_THREAD_CHECK();
++  GPU_CLIENT_LOG(
++      "[" << GetLogPrefix() << "] glTexStorage2DImageCHROMIUM("
++          << GLES2Util::GetStringTextureBindTarget(target) << ", "
++          << GLES2Util::GetStringTextureInternalFormatStorage(internalFormat)
++          << ", " << GLES2Util::GetStringClientBufferUsage(bufferUsage) << ", "
++          << width << ", " << height << ")");
++  if (bufferUsage != GL_SCANOUT_CHROMIUM) {
++    SetGLError(GL_INVALID_ENUM, "glTexStorage2DImageCHROMIUM",
++               "bufferUsage GL_INVALID_ENUM");
++    return;
++  }
++  if (width < 0) {
++    SetGLError(GL_INVALID_VALUE, "glTexStorage2DImageCHROMIUM", "width < 0");
++    return;
++  }
++  if (height < 0) {
++    SetGLError(GL_INVALID_VALUE, "glTexStorage2DImageCHROMIUM", "height < 0");
++    return;
++  }
++  helper_->TexStorage2DImageCHROMIUM(target, internalFormat, width, height);
++  CheckGLError();
++}
++
+ void GLES2Implementation::WindowRectanglesEXT(GLenum mode,
+                                               GLsizei count,
+                                               const GLint* box) {
+diff --git gpu/command_buffer/client/gles2_implementation_unittest_autogen.h gpu/command_buffer/client/gles2_implementation_unittest_autogen.h
+index 6f17bb34f47bb..030dbb73074b9 100644
+--- gpu/command_buffer/client/gles2_implementation_unittest_autogen.h
++++ gpu/command_buffer/client/gles2_implementation_unittest_autogen.h
+@@ -2955,6 +2955,24 @@ TEST_F(GLES2ImplementationTest, CoverageModulationCHROMIUM) {
+   EXPECT_EQ(0, memcmp(&expected, commands_, sizeof(expected)));
+ }
+ 
++TEST_F(GLES2ImplementationTest, TexStorage2DImageCHROMIUM) {
++  struct Cmds {
++    cmds::TexStorage2DImageCHROMIUM cmd;
++  };
++  Cmds expected;
++  expected.cmd.Init(GL_TEXTURE_2D, GL_RGB565, 4, 5);
++
++  gl_->TexStorage2DImageCHROMIUM(GL_TEXTURE_2D, GL_RGB565, GL_SCANOUT_CHROMIUM,
++                                 4, 5);
++  EXPECT_EQ(0, memcmp(&expected, commands_, sizeof(expected)));
++}
++
++TEST_F(GLES2ImplementationTest, TexStorage2DImageCHROMIUMInvalidConstantArg2) {
++  gl_->TexStorage2DImageCHROMIUM(GL_TEXTURE_2D, GL_RGB565, GL_NONE, 4, 5);
++  EXPECT_TRUE(NoCommandsWritten());
++  EXPECT_EQ(GL_INVALID_ENUM, CheckError());
++}
++
+ TEST_F(GLES2ImplementationTest, WindowRectanglesEXT) {
+   GLint data[2][4] = {{0}};
+   struct Cmds {
+diff --git gpu/command_buffer/client/gles2_interface_autogen.h gpu/command_buffer/client/gles2_interface_autogen.h
+index 651adb903ae5d..145c3089fd015 100644
+--- gpu/command_buffer/client/gles2_interface_autogen.h
++++ gpu/command_buffer/client/gles2_interface_autogen.h
+@@ -841,6 +841,11 @@ virtual GLint GetFragDataIndexEXT(GLuint program, const char* name) = 0;
+ virtual void InitializeDiscardableTextureCHROMIUM(GLuint texture_id) = 0;
+ virtual void UnlockDiscardableTextureCHROMIUM(GLuint texture_id) = 0;
+ virtual bool LockDiscardableTextureCHROMIUM(GLuint texture_id) = 0;
++virtual void TexStorage2DImageCHROMIUM(GLenum target,
++                                       GLenum internalFormat,
++                                       GLenum bufferUsage,
++                                       GLsizei width,
++                                       GLsizei height) = 0;
+ virtual void SetColorSpaceMetadataCHROMIUM(GLuint texture_id,
+                                            GLcolorSpace color_space) = 0;
+ virtual void WindowRectanglesEXT(GLenum mode,
+diff --git gpu/command_buffer/client/gles2_interface_stub_autogen.h gpu/command_buffer/client/gles2_interface_stub_autogen.h
+index 45942019e730c..241c05ac9dd62 100644
+--- gpu/command_buffer/client/gles2_interface_stub_autogen.h
++++ gpu/command_buffer/client/gles2_interface_stub_autogen.h
+@@ -817,6 +817,11 @@ GLint GetFragDataIndexEXT(GLuint program, const char* name) override;
+ void InitializeDiscardableTextureCHROMIUM(GLuint texture_id) override;
+ void UnlockDiscardableTextureCHROMIUM(GLuint texture_id) override;
+ bool LockDiscardableTextureCHROMIUM(GLuint texture_id) override;
++void TexStorage2DImageCHROMIUM(GLenum target,
++                               GLenum internalFormat,
++                               GLenum bufferUsage,
++                               GLsizei width,
++                               GLsizei height) override;
+ void SetColorSpaceMetadataCHROMIUM(GLuint texture_id,
+                                    GLcolorSpace color_space) override;
+ void WindowRectanglesEXT(GLenum mode, GLsizei count, const GLint* box) override;
+diff --git gpu/command_buffer/client/gles2_interface_stub_impl_autogen.h gpu/command_buffer/client/gles2_interface_stub_impl_autogen.h
+index a828e3c1fa979..fdac5eff878b6 100644
+--- gpu/command_buffer/client/gles2_interface_stub_impl_autogen.h
++++ gpu/command_buffer/client/gles2_interface_stub_impl_autogen.h
+@@ -1100,6 +1100,11 @@ bool GLES2InterfaceStub::LockDiscardableTextureCHROMIUM(
+     GLuint /* texture_id */) {
+   return 0;
+ }
++void GLES2InterfaceStub::TexStorage2DImageCHROMIUM(GLenum /* target */,
++                                                   GLenum /* internalFormat */,
++                                                   GLenum /* bufferUsage */,
++                                                   GLsizei /* width */,
++                                                   GLsizei /* height */) {}
+ void GLES2InterfaceStub::SetColorSpaceMetadataCHROMIUM(
+     GLuint /* texture_id */,
+     GLcolorSpace /* color_space */) {}
+diff --git gpu/command_buffer/client/gles2_trace_implementation_autogen.h gpu/command_buffer/client/gles2_trace_implementation_autogen.h
+index a7be3e0c3ba5f..3b61139163921 100644
+--- gpu/command_buffer/client/gles2_trace_implementation_autogen.h
++++ gpu/command_buffer/client/gles2_trace_implementation_autogen.h
+@@ -817,6 +817,11 @@ GLint GetFragDataIndexEXT(GLuint program, const char* name) override;
+ void InitializeDiscardableTextureCHROMIUM(GLuint texture_id) override;
+ void UnlockDiscardableTextureCHROMIUM(GLuint texture_id) override;
+ bool LockDiscardableTextureCHROMIUM(GLuint texture_id) override;
++void TexStorage2DImageCHROMIUM(GLenum target,
++                               GLenum internalFormat,
++                               GLenum bufferUsage,
++                               GLsizei width,
++                               GLsizei height) override;
+ void SetColorSpaceMetadataCHROMIUM(GLuint texture_id,
+                                    GLcolorSpace color_space) override;
+ void WindowRectanglesEXT(GLenum mode, GLsizei count, const GLint* box) override;
+diff --git gpu/command_buffer/client/gles2_trace_implementation_impl_autogen.h gpu/command_buffer/client/gles2_trace_implementation_impl_autogen.h
+index b727eb489bcc2..4bbb85a11bec3 100644
+--- gpu/command_buffer/client/gles2_trace_implementation_impl_autogen.h
++++ gpu/command_buffer/client/gles2_trace_implementation_impl_autogen.h
+@@ -2335,6 +2335,16 @@ bool GLES2TraceImplementation::LockDiscardableTextureCHROMIUM(
+   return gl_->LockDiscardableTextureCHROMIUM(texture_id);
+ }
+ 
++void GLES2TraceImplementation::TexStorage2DImageCHROMIUM(GLenum target,
++                                                         GLenum internalFormat,
++                                                         GLenum bufferUsage,
++                                                         GLsizei width,
++                                                         GLsizei height) {
++  TRACE_EVENT_BINARY_EFFICIENT0("gpu", "GLES2Trace::TexStorage2DImageCHROMIUM");
++  gl_->TexStorage2DImageCHROMIUM(target, internalFormat, bufferUsage, width,
++                                 height);
++}
++
+ void GLES2TraceImplementation::SetColorSpaceMetadataCHROMIUM(
+     GLuint texture_id,
+     GLcolorSpace color_space) {
+diff --git gpu/command_buffer/client/raster_implementation_gles_unittest.cc gpu/command_buffer/client/raster_implementation_gles_unittest.cc
+index 4e4e88183c5c5..bfca34e34c3fb 100644
+--- gpu/command_buffer/client/raster_implementation_gles_unittest.cc
++++ gpu/command_buffer/client/raster_implementation_gles_unittest.cc
+@@ -128,6 +128,12 @@ class RasterMockGLES2Interface : public gles2::GLES2InterfaceStub {
+                     GLenum internalFormat,
+                     GLsizei width,
+                     GLsizei height));
++  MOCK_METHOD5(TexStorage2DImageCHROMIUM,
++               void(GLenum target,
++                    GLenum internalFormat,
++                    GLenum bufferUsage,
++                    GLsizei width,
++                    GLsizei height));
+ 
+   MOCK_METHOD2(PixelStorei, void(GLenum pname, GLint param));
+   MOCK_METHOD2(TraceBeginCHROMIUM,
+diff --git gpu/command_buffer/common/gles2_cmd_format_autogen.h gpu/command_buffer/common/gles2_cmd_format_autogen.h
+index 3d686ba7925df..65467b7547655 100644
+--- gpu/command_buffer/common/gles2_cmd_format_autogen.h
++++ gpu/command_buffer/common/gles2_cmd_format_autogen.h
+@@ -11,6 +11,7 @@
+ #ifndef GPU_COMMAND_BUFFER_COMMON_GLES2_CMD_FORMAT_AUTOGEN_H_
+ #define GPU_COMMAND_BUFFER_COMMON_GLES2_CMD_FORMAT_AUTOGEN_H_
+ 
++#define GL_SCANOUT_CHROMIUM 0x6000
+ #define GL_SYNC_GPU_COMMANDS_COMPLETE 0x9117
+ #define GL_SYNC_FLUSH_COMMANDS_BIT 0x00000001
+ 
+@@ -15185,6 +15186,60 @@ static_assert(
+     offsetof(LockDiscardableTextureCHROMIUM, texture_id) == 4,
+     "offset of LockDiscardableTextureCHROMIUM texture_id should be 4");
+ 
++struct TexStorage2DImageCHROMIUM {
++  typedef TexStorage2DImageCHROMIUM ValueType;
++  static const CommandId kCmdId = kTexStorage2DImageCHROMIUM;
++  static const cmd::ArgFlags kArgFlags = cmd::kFixed;
++  static const uint8_t cmd_flags = CMD_FLAG_SET_TRACE_LEVEL(3);
++
++  static uint32_t ComputeSize() {
++    return static_cast<uint32_t>(sizeof(ValueType));  // NOLINT
++  }
++
++  void SetHeader() { header.SetCmd<ValueType>(); }
++
++  void Init(GLenum _target,
++            GLenum _internalFormat,
++            GLsizei _width,
++            GLsizei _height) {
++    SetHeader();
++    target = _target;
++    internalFormat = _internalFormat;
++    width = _width;
++    height = _height;
++  }
++
++  void* Set(void* cmd,
++            GLenum _target,
++            GLenum _internalFormat,
++            GLsizei _width,
++            GLsizei _height) {
++    static_cast<ValueType*>(cmd)->Init(_target, _internalFormat, _width,
++                                       _height);
++    return NextCmdAddress<ValueType>(cmd);
++  }
++
++  gpu::CommandHeader header;
++  uint32_t target;
++  uint32_t internalFormat;
++  int32_t width;
++  int32_t height;
++  static const uint32_t bufferUsage = GL_SCANOUT_CHROMIUM;
++};
++
++static_assert(sizeof(TexStorage2DImageCHROMIUM) == 20,
++              "size of TexStorage2DImageCHROMIUM should be 20");
++static_assert(offsetof(TexStorage2DImageCHROMIUM, header) == 0,
++              "offset of TexStorage2DImageCHROMIUM header should be 0");
++static_assert(offsetof(TexStorage2DImageCHROMIUM, target) == 4,
++              "offset of TexStorage2DImageCHROMIUM target should be 4");
++static_assert(offsetof(TexStorage2DImageCHROMIUM, internalFormat) == 8,
++              "offset of TexStorage2DImageCHROMIUM internalFormat should be 8");
++static_assert(offsetof(TexStorage2DImageCHROMIUM, width) == 12,
++              "offset of TexStorage2DImageCHROMIUM width should be 12");
++static_assert(offsetof(TexStorage2DImageCHROMIUM, height) == 16,
++              "offset of TexStorage2DImageCHROMIUM height should be 16");
++
+ struct SetColorSpaceMetadataCHROMIUM {
+   typedef SetColorSpaceMetadataCHROMIUM ValueType;
+   static const CommandId kCmdId = kSetColorSpaceMetadataCHROMIUM;
+diff --git gpu/command_buffer/common/gles2_cmd_format_test_autogen.h gpu/command_buffer/common/gles2_cmd_format_test_autogen.h
+index 96564f51777d0..d2dd4e4faaac1 100644
+--- gpu/command_buffer/common/gles2_cmd_format_test_autogen.h
++++ gpu/command_buffer/common/gles2_cmd_format_test_autogen.h
+@@ -5015,6 +5015,22 @@ TEST_F(GLES2FormatTest, LockDiscardableTextureCHROMIUM) {
+   CheckBytesWrittenMatchesExpectedSize(next_cmd, sizeof(cmd));
+ }
+ 
++TEST_F(GLES2FormatTest, TexStorage2DImageCHROMIUM) {
++  cmds::TexStorage2DImageCHROMIUM& cmd =
++      *GetBufferAs<cmds::TexStorage2DImageCHROMIUM>();
++  void* next_cmd =
++      cmd.Set(&cmd, static_cast<GLenum>(11), static_cast<GLenum>(12),
++              static_cast<GLsizei>(13), static_cast<GLsizei>(14));
++  EXPECT_EQ(static_cast<uint32_t>(cmds::TexStorage2DImageCHROMIUM::kCmdId),
++            cmd.header.command);
++  EXPECT_EQ(sizeof(cmd), cmd.header.size * 4u);
++  EXPECT_EQ(static_cast<GLenum>(11), cmd.target);
++  EXPECT_EQ(static_cast<GLenum>(12), cmd.internalFormat);
++  EXPECT_EQ(static_cast<GLsizei>(13), cmd.width);
++  EXPECT_EQ(static_cast<GLsizei>(14), cmd.height);
++  CheckBytesWrittenMatchesExpectedSize(next_cmd, sizeof(cmd));
++}
++
+ TEST_F(GLES2FormatTest, SetColorSpaceMetadataCHROMIUM) {
+   cmds::SetColorSpaceMetadataCHROMIUM& cmd =
+       *GetBufferAs<cmds::SetColorSpaceMetadataCHROMIUM>();
+diff --git gpu/command_buffer/common/gles2_cmd_ids_autogen.h gpu/command_buffer/common/gles2_cmd_ids_autogen.h
+index 3aa989dac274f..8070bd5903c25 100644
+--- gpu/command_buffer/common/gles2_cmd_ids_autogen.h
++++ gpu/command_buffer/common/gles2_cmd_ids_autogen.h
+@@ -318,27 +318,28 @@
+   OP(InitializeDiscardableTextureCHROMIUM)                     /* 559 */ \
+   OP(UnlockDiscardableTextureCHROMIUM)                         /* 560 */ \
+   OP(LockDiscardableTextureCHROMIUM)                           /* 561 */ \
+-  OP(SetColorSpaceMetadataCHROMIUM)                            /* 562 */ \
+-  OP(WindowRectanglesEXTImmediate)                             /* 563 */ \
+-  OP(CreateGpuFenceINTERNAL)                                   /* 564 */ \
+-  OP(WaitGpuFenceCHROMIUM)                                     /* 565 */ \
+-  OP(DestroyGpuFenceCHROMIUM)                                  /* 566 */ \
+-  OP(SetReadbackBufferShadowAllocationINTERNAL)                /* 567 */ \
+-  OP(FramebufferTextureMultiviewOVR)                           /* 568 */ \
+-  OP(MaxShaderCompilerThreadsKHR)                              /* 569 */ \
+-  OP(CreateAndTexStorage2DSharedImageINTERNALImmediate)        /* 570 */ \
+-  OP(BeginSharedImageAccessDirectCHROMIUM)                     /* 571 */ \
+-  OP(EndSharedImageAccessDirectCHROMIUM)                       /* 572 */ \
+-  OP(BeginBatchReadAccessSharedImageCHROMIUM)                  /* 573 */ \
+-  OP(EndBatchReadAccessSharedImageCHROMIUM)                    /* 574 */ \
+-  OP(EnableiOES)                                               /* 575 */ \
+-  OP(DisableiOES)                                              /* 576 */ \
+-  OP(BlendEquationiOES)                                        /* 577 */ \
+-  OP(BlendEquationSeparateiOES)                                /* 578 */ \
+-  OP(BlendFunciOES)                                            /* 579 */ \
+-  OP(BlendFuncSeparateiOES)                                    /* 580 */ \
+-  OP(ColorMaskiOES)                                            /* 581 */ \
+-  OP(IsEnablediOES)                                            /* 582 */
++  OP(TexStorage2DImageCHROMIUM)                                /* 562 */ \
++  OP(SetColorSpaceMetadataCHROMIUM)                            /* 563 */ \
++  OP(WindowRectanglesEXTImmediate)                             /* 564 */ \
++  OP(CreateGpuFenceINTERNAL)                                   /* 565 */ \
++  OP(WaitGpuFenceCHROMIUM)                                     /* 566 */ \
++  OP(DestroyGpuFenceCHROMIUM)                                  /* 567 */ \
++  OP(SetReadbackBufferShadowAllocationINTERNAL)                /* 568 */ \
++  OP(FramebufferTextureMultiviewOVR)                           /* 569 */ \
++  OP(MaxShaderCompilerThreadsKHR)                              /* 570 */ \
++  OP(CreateAndTexStorage2DSharedImageINTERNALImmediate)        /* 571 */ \
++  OP(BeginSharedImageAccessDirectCHROMIUM)                     /* 572 */ \
++  OP(EndSharedImageAccessDirectCHROMIUM)                       /* 573 */ \
++  OP(BeginBatchReadAccessSharedImageCHROMIUM)                  /* 574 */ \
++  OP(EndBatchReadAccessSharedImageCHROMIUM)                    /* 575 */ \
++  OP(EnableiOES)                                               /* 576 */ \
++  OP(DisableiOES)                                              /* 577 */ \
++  OP(BlendEquationiOES)                                        /* 578 */ \
++  OP(BlendEquationSeparateiOES)                                /* 579 */ \
++  OP(BlendFunciOES)                                            /* 580 */ \
++  OP(BlendFuncSeparateiOES)                                    /* 581 */ \
++  OP(ColorMaskiOES)                                            /* 582 */ \
++  OP(IsEnablediOES)                                            /* 583 */
+ 
+ enum CommandId {
+   kOneBeforeStartPoint =
+diff --git gpu/command_buffer/common/gles2_cmd_utils_autogen.h gpu/command_buffer/common/gles2_cmd_utils_autogen.h
+index f8452342f8fd4..ace9bf4650dc7 100644
+--- gpu/command_buffer/common/gles2_cmd_utils_autogen.h
++++ gpu/command_buffer/common/gles2_cmd_utils_autogen.h
+@@ -25,6 +25,7 @@ static std::string GetStringBufferfv(uint32_t value);
+ static std::string GetStringBufferiv(uint32_t value);
+ static std::string GetStringBufferuiv(uint32_t value);
+ static std::string GetStringCapability(uint32_t value);
++static std::string GetStringClientBufferUsage(uint32_t value);
+ static std::string GetStringCmpFunction(uint32_t value);
+ static std::string GetStringCompressedTextureFormat(uint32_t value);
+ static std::string GetStringCoverageModulationComponents(uint32_t value);
+diff --git gpu/command_buffer/common/gles2_cmd_utils_implementation_autogen.h gpu/command_buffer/common/gles2_cmd_utils_implementation_autogen.h
+index 9c6a62b5856d8..56c9ef320403c 100644
+--- gpu/command_buffer/common/gles2_cmd_utils_implementation_autogen.h
++++ gpu/command_buffer/common/gles2_cmd_utils_implementation_autogen.h
+@@ -964,6 +964,10 @@ static const GLES2Util::EnumToString enum_to_string_table[] = {
+         0x40000000,
+         "GL_MULTISAMPLE_BUFFER_BIT6_QCOM",
+     },
++    {
++        0x6000,
++        "GL_SCANOUT_CHROMIUM",
++    },
+     {
+         0x6003,
+         "GL_GET_ERROR_QUERY_CHROMIUM",
+@@ -6993,6 +6997,14 @@ std::string GLES2Util::GetStringCapability(uint32_t value) {
+                                            std::size(string_table), value);
+ }
+ 
++std::string GLES2Util::GetStringClientBufferUsage(uint32_t value) {
++  static const EnumToString string_table[] = {
++      {GL_SCANOUT_CHROMIUM, "GL_SCANOUT_CHROMIUM"},
++  };
++  return GLES2Util::GetQualifiedEnumString(string_table,
++                                           std::size(string_table), value);
++}
++
+ std::string GLES2Util::GetStringCmpFunction(uint32_t value) {
+   static const EnumToString string_table[] = {
+       {GL_NEVER, "GL_NEVER"},     {GL_LESS, "GL_LESS"},
+diff --git gpu/command_buffer/common/raster_cmd_format_autogen.h gpu/command_buffer/common/raster_cmd_format_autogen.h
+index 844c40d9d9cb0..5483d60d5ff18 100644
+--- gpu/command_buffer/common/raster_cmd_format_autogen.h
++++ gpu/command_buffer/common/raster_cmd_format_autogen.h
+@@ -11,6 +11,8 @@
+ #ifndef GPU_COMMAND_BUFFER_COMMON_RASTER_CMD_FORMAT_AUTOGEN_H_
+ #define GPU_COMMAND_BUFFER_COMMON_RASTER_CMD_FORMAT_AUTOGEN_H_
+ 
++#define GL_SCANOUT_CHROMIUM 0x6000
++
+ struct Finish {
+   typedef Finish ValueType;
+   static const CommandId kCmdId = kFinish;
+diff --git gpu/command_buffer/common/webgpu_cmd_format_autogen.h gpu/command_buffer/common/webgpu_cmd_format_autogen.h
+index ab4b022dfe027..10e692192800c 100644
+--- gpu/command_buffer/common/webgpu_cmd_format_autogen.h
++++ gpu/command_buffer/common/webgpu_cmd_format_autogen.h
+@@ -11,6 +11,8 @@
+ #ifndef GPU_COMMAND_BUFFER_COMMON_WEBGPU_CMD_FORMAT_AUTOGEN_H_
+ #define GPU_COMMAND_BUFFER_COMMON_WEBGPU_CMD_FORMAT_AUTOGEN_H_
+ 
++#define GL_SCANOUT_CHROMIUM 0x6000
++
+ struct DawnCommands {
+   typedef DawnCommands ValueType;
+   static const CommandId kCmdId = kDawnCommands;
+diff --git gpu/command_buffer/gles2_cmd_buffer_functions.txt gpu/command_buffer/gles2_cmd_buffer_functions.txt
+index 6ed99007cce8c..624c7317a46cb 100644
+--- gpu/command_buffer/gles2_cmd_buffer_functions.txt
++++ gpu/command_buffer/gles2_cmd_buffer_functions.txt
+@@ -355,6 +355,9 @@ GL_APICALL void         GL_APIENTRY glInitializeDiscardableTextureCHROMIUM (GLui
+ GL_APICALL void         GL_APIENTRY glUnlockDiscardableTextureCHROMIUM (GLuint texture_id);
+ GL_APICALL bool         GL_APIENTRY glLockDiscardableTextureCHROMIUM (GLuint texture_id);
+ 
++// Extension CHROMIUM_texture_storage_image
++GL_APICALL void         GL_APIENTRY glTexStorage2DImageCHROMIUM (GLenumTextureBindTarget target, GLenumTextureInternalFormatStorage internalFormat, GLenumClientBufferUsage bufferUsage, GLsizei width, GLsizei height);
++
+ // Extension CHROMIUM_color_space_metadata
+ GL_APICALL void         GL_APIENTRY glSetColorSpaceMetadataCHROMIUM (GLuint texture_id, GLcolorSpace color_space);
+ 
+diff --git gpu/command_buffer/service/feature_info.cc gpu/command_buffer/service/feature_info.cc
+index b8e38171e6c5b..c5620c6bf19f5 100644
+--- gpu/command_buffer/service/feature_info.cc
++++ gpu/command_buffer/service/feature_info.cc
+@@ -311,9 +311,10 @@ bool IsGL_REDSupportedOnFBOs() {
+ #endif  // BUILDFLAG(IS_MAC)
+ }
+ 
+-void FeatureInfo::EnableTextureStorageImage() {
+-  if (!feature_flags_.texture_storage_image) {
+-    feature_flags_.texture_storage_image = true;
++void FeatureInfo::EnableCHROMIUMTextureStorageImage() {
++  if (!feature_flags_.chromium_texture_storage_image) {
++    feature_flags_.chromium_texture_storage_image = true;
++    AddExtensionString("GL_CHROMIUM_texture_storage_image");
+   }
+ }
+ 
+diff --git gpu/command_buffer/service/feature_info.h gpu/command_buffer/service/feature_info.h
+index 8d47fd2bf8d5d..1595da4a007d4 100644
+--- gpu/command_buffer/service/feature_info.h
++++ gpu/command_buffer/service/feature_info.h
+@@ -128,7 +128,7 @@ class GPU_GLES2_EXPORT FeatureInfo : public base::RefCounted<FeatureInfo> {
+     bool oes_rgb8_rgba8 = false;
+     bool angle_robust_resource_initialization = false;
+     bool nv_fence = false;
+-    bool texture_storage_image = false;
++    bool chromium_texture_storage_image = false;
+     bool ext_window_rectangles = false;
+     bool chromium_gpu_fence = false;
+     bool separate_stencil_ref_mask_writemask = false;
+@@ -208,7 +208,7 @@ class GPU_GLES2_EXPORT FeatureInfo : public base::RefCounted<FeatureInfo> {
+   bool IsWebGL2OrES3OrHigherContext() const;
+   bool IsES31ForTestingContext() const;
+ 
+-  void EnableTextureStorageImage();
++  void EnableCHROMIUMTextureStorageImage();
+   void EnableCHROMIUMColorBufferFloatRGBA();
+   void EnableCHROMIUMColorBufferFloatRGB();
+   void EnableEXTFloatBlend();
+diff --git gpu/command_buffer/service/gl_utils.cc gpu/command_buffer/service/gl_utils.cc
+index 90781dcf5344f..edf82c265246c 100644
+--- gpu/command_buffer/service/gl_utils.cc
++++ gpu/command_buffer/service/gl_utils.cc
+@@ -1205,6 +1205,16 @@ bool GetGFXBufferFormat(GLenum internal_format, gfx::BufferFormat* out_format) {
+   }
+ }
+ 
++bool GetGFXBufferUsage(GLenum buffer_usage, gfx::BufferUsage* out_usage) {
++  switch (buffer_usage) {
++    case GL_SCANOUT_CHROMIUM:
++      *out_usage = gfx::BufferUsage::SCANOUT;
++      return true;
++    default:
++      return false;
++  }
++}
++
+ bool IsASTCFormat(GLenum internal_format) {
+   switch (internal_format) {
+     case GL_COMPRESSED_RGBA_ASTC_4x4_KHR:
+diff --git gpu/command_buffer/service/gl_utils.h gpu/command_buffer/service/gl_utils.h
+index 7be6e763f033b..093f3d7dc7da6 100644
+--- gpu/command_buffer/service/gl_utils.h
++++ gpu/command_buffer/service/gl_utils.h
+@@ -158,6 +158,7 @@ GLenum GetTextureBindingQuery(GLenum texture_type);
+ gfx::OverlayTransform GetGFXOverlayTransform(GLenum plane_transform);
+ 
+ bool GetGFXBufferFormat(GLenum internal_format, gfx::BufferFormat* out_format);
++bool GetGFXBufferUsage(GLenum buffer_usage, gfx::BufferUsage* out_usage);
+ 
+ bool IsASTCFormat(GLenum internal_format);
+ bool IsCompressedTextureFormat(GLenum internal_format);
+diff --git gpu/command_buffer/service/gles2_cmd_decoder.cc gpu/command_buffer/service/gles2_cmd_decoder.cc
+index 3d3e003e7c532..2b89619fd4071 100644
+--- gpu/command_buffer/service/gles2_cmd_decoder.cc
++++ gpu/command_buffer/service/gles2_cmd_decoder.cc
+@@ -3611,11 +3611,11 @@ gpu::ContextResult GLES2DecoderImpl::Initialize(
+     }
+   }
+ 
+-  // Support for texture_storage_image depends on the underlying
++  // Support for CHROMIUM_texture_storage_image depends on the underlying
+   // ImageFactory's ability to create anonymous images.
+   gpu::ImageFactory* image_factory = group_->image_factory();
+   if (image_factory && image_factory->SupportsCreateAnonymousImage())
+-    feature_info_->EnableTextureStorageImage();
++    feature_info_->EnableCHROMIUMTextureStorageImage();
+ 
+   // In theory |needs_emulation| needs to be true on Desktop GL 4.1 or lower.
+   // However, we set it to true everywhere, not to trust drivers to handle
+@@ -4311,7 +4311,7 @@ Capabilities GLES2DecoderImpl::GetCapabilities() {
+   }
+   caps.texture_npot = feature_info_->feature_flags().npot_ok;
+   caps.texture_storage_image =
+-      feature_info_->feature_flags().texture_storage_image;
++      feature_info_->feature_flags().chromium_texture_storage_image;
+   caps.supports_oop_raster = false;
+   caps.chromium_gpu_fence = feature_info_->feature_flags().chromium_gpu_fence;
+   caps.separate_stencil_ref_mask_writemask =
+@@ -18437,6 +18437,85 @@ void GLES2DecoderImpl::DoTexStorage3D(GLenum target,
+                  ContextState::k3D, "glTexStorage3D");
+ }
+ 
++void GLES2DecoderImpl::DoTexStorage2DImageCHROMIUM(GLenum target,
++                                                   GLenum internal_format,
++                                                   GLenum buffer_usage,
++                                                   GLsizei width,
++                                                   GLsizei height) {
++  TRACE_EVENT2("gpu", "GLES2DecoderImpl::DoTexStorage2DImageCHROMIUM", "width",
++               width, "height", height);
++
++  ScopedGLErrorSuppressor suppressor(
++      "GLES2CmdDecoder::DoTexStorage2DImageCHROMIUM", error_state_.get());
++
++  if (!texture_manager()->ValidForTarget(target, 0, width, height, 1)) {
++    LOCAL_SET_GL_ERROR(GL_INVALID_VALUE, "glTexStorage2DImageCHROMIUM",
++                       "dimensions out of range");
++    return;
++  }
++
++  TextureRef* texture_ref =
++      texture_manager()->GetTextureInfoForTarget(&state_, target);
++  if (!texture_ref) {
++    LOCAL_SET_GL_ERROR(GL_INVALID_OPERATION, "glTexStorage2DImageCHROMIUM",
++                       "unknown texture for target");
++    return;
++  }
++
++  Texture* texture = texture_ref->texture();
++  if (texture->IsImmutable()) {
++    LOCAL_SET_GL_ERROR(GL_INVALID_OPERATION, "glTexStorage2DImageCHROMIUM",
++                       "texture is immutable");
++    return;
++  }
++
++  gfx::BufferFormat buffer_format;
++  if (!GetGFXBufferFormat(internal_format, &buffer_format)) {
++    LOCAL_SET_GL_ERROR(GL_INVALID_ENUM, "glTexStorage2DImageCHROMIUM",
++                       "Invalid buffer format");
++    return;
++  }
++
++  gfx::BufferUsage gfx_buffer_usage;
++  if (!GetGFXBufferUsage(buffer_usage, &gfx_buffer_usage)) {
++    LOCAL_SET_GL_ERROR(GL_INVALID_ENUM, "glTexStorage2DImageCHROMIUM",
++                       "Invalid buffer usage");
++    return;
++  }
++
++  if (!GetContextGroup()->image_factory()) {
++    LOCAL_SET_GL_ERROR(GL_INVALID_OPERATION, "glTexStorage2DImageCHROMIUM",
++                       "Cannot create GL image");
++    return;
++  }
++
++  bool is_cleared = false;
++  scoped_refptr<gl::GLImage> image =
++      GetContextGroup()->image_factory()->CreateAnonymousImage(
++          gfx::Size(width, height), buffer_format, gfx_buffer_usage,
++          gpu::kNullSurfaceHandle, &is_cleared);
++  if (!image || !image->BindTexImage(target)) {
++    LOCAL_SET_GL_ERROR(GL_INVALID_OPERATION, "glTexStorage2DImageCHROMIUM",
++                       "Failed to create or bind GL Image");
++    return;
++  }
++
++  gfx::Rect cleared_rect;
++  if (is_cleared)
++    cleared_rect = gfx::Rect(width, height);
++
++  texture_manager()->SetLevelInfo(
++      texture_ref, target, 0, image->GetInternalFormat(), width, height, 1, 0,
++      image->GetDataFormat(), image->GetDataType(), cleared_rect);
++  texture_manager()->SetLevelImage(texture_ref, target, 0, image.get(),
++                                   Texture::BOUND);
++
++  if (texture->IsAttachedToFramebuffer())
++    framebuffer_state_.clear_state_dirty = true;
++
++  texture->SetImmutable(true, false);
++}
++
+ void GLES2DecoderImpl::DoProduceTextureDirectCHROMIUM(
+     GLuint client_id,
+     const volatile GLbyte* data) {
+diff --git gpu/command_buffer/service/gles2_cmd_decoder_autogen.h gpu/command_buffer/service/gles2_cmd_decoder_autogen.h
+index c07937b9d96a6..4ab29e8e783c8 100644
+--- gpu/command_buffer/service/gles2_cmd_decoder_autogen.h
++++ gpu/command_buffer/service/gles2_cmd_decoder_autogen.h
+@@ -5172,6 +5172,46 @@ error::Error GLES2DecoderImpl::HandleBlendBarrierKHR(
+   return error::kNoError;
+ }
+ 
++error::Error GLES2DecoderImpl::HandleTexStorage2DImageCHROMIUM(
++    uint32_t immediate_data_size,
++    const volatile void* cmd_data) {
++  const volatile gles2::cmds::TexStorage2DImageCHROMIUM& c =
++      *static_cast<const volatile gles2::cmds::TexStorage2DImageCHROMIUM*>(
++          cmd_data);
++  if (!features().chromium_texture_storage_image) {
++    return error::kUnknownCommand;
++  }
++
++  GLenum target = static_cast<GLenum>(c.target);
++  GLenum internalFormat = static_cast<GLenum>(c.internalFormat);
++  GLenum bufferUsage = static_cast<GLenum>(c.bufferUsage);
++  GLsizei width = static_cast<GLsizei>(c.width);
++  GLsizei height = static_cast<GLsizei>(c.height);
++  if (!validators_->texture_bind_target.IsValid(target)) {
++    LOCAL_SET_GL_ERROR_INVALID_ENUM("glTexStorage2DImageCHROMIUM", target,
++                                    "target");
++    return error::kNoError;
++  }
++  if (!validators_->texture_internal_format_storage.IsValid(internalFormat)) {
++    LOCAL_SET_GL_ERROR_INVALID_ENUM("glTexStorage2DImageCHROMIUM",
++                                    internalFormat, "internalFormat");
++    return error::kNoError;
++  }
++  if (width < 0) {
++    LOCAL_SET_GL_ERROR(GL_INVALID_VALUE, "glTexStorage2DImageCHROMIUM",
++                       "width < 0");
++    return error::kNoError;
++  }
++  if (height < 0) {
++    LOCAL_SET_GL_ERROR(GL_INVALID_VALUE, "glTexStorage2DImageCHROMIUM",
++                       "height < 0");
++    return error::kNoError;
++  }
++  DoTexStorage2DImageCHROMIUM(target, internalFormat, bufferUsage, width,
++                              height);
++  return error::kNoError;
++}
++
+ error::Error GLES2DecoderImpl::HandleWindowRectanglesEXTImmediate(
+     uint32_t immediate_data_size,
+     const volatile void* cmd_data) {
+diff --git gpu/command_buffer/service/gles2_cmd_decoder_passthrough.cc gpu/command_buffer/service/gles2_cmd_decoder_passthrough.cc
+index ab2f90ae704f7..ea65b46b675de 100644
+--- gpu/command_buffer/service/gles2_cmd_decoder_passthrough.cc
++++ gpu/command_buffer/service/gles2_cmd_decoder_passthrough.cc
+@@ -1075,11 +1075,11 @@ gpu::ContextResult GLES2DecoderPassthroughImpl::Initialize(
+   InitializeFeatureInfo(attrib_helper.context_type, DisallowedFeatures(),
+                         false);
+ 
+-  // Support for texture_storage_image depends on the underlying
++  // Support for CHROMIUM_texture_storage_image depends on the underlying
+   // ImageFactory's ability to create anonymous images.
+   gpu::ImageFactory* image_factory = group_->image_factory();
+   if (image_factory && image_factory->SupportsCreateAnonymousImage()) {
+-    feature_info_->EnableTextureStorageImage();
++    feature_info_->EnableCHROMIUMTextureStorageImage();
+   }
+ 
+   // Check for required extensions
+@@ -1736,7 +1736,7 @@ gpu::Capabilities GLES2DecoderPassthroughImpl::GetCapabilities() {
+ #endif  // BUILDFLAG(IS_WIN)
+   caps.texture_npot = feature_info_->feature_flags().npot_ok;
+   caps.texture_storage_image =
+-      feature_info_->feature_flags().texture_storage_image;
++      feature_info_->feature_flags().chromium_texture_storage_image;
+   caps.chromium_gpu_fence = feature_info_->feature_flags().chromium_gpu_fence;
+   caps.chromium_nonblocking_readback = true;
+   caps.num_surface_buffers = surface_->GetBufferCount();
+@@ -2182,7 +2182,7 @@ void GLES2DecoderPassthroughImpl::InitializeFeatureInfo(
+ 
+   gpu::ImageFactory* image_factory = group_->image_factory();
+   if (image_factory && image_factory->SupportsCreateAnonymousImage()) {
+-    feature_info_->EnableTextureStorageImage();
++    feature_info_->EnableCHROMIUMTextureStorageImage();
+   }
+ }
+ 
+diff --git gpu/command_buffer/service/gles2_cmd_decoder_passthrough_doer_prototypes.h gpu/command_buffer/service/gles2_cmd_decoder_passthrough_doer_prototypes.h
+index 6a8e3cc7957dc..8cb86a0044e0a 100644
+--- gpu/command_buffer/service/gles2_cmd_decoder_passthrough_doer_prototypes.h
++++ gpu/command_buffer/service/gles2_cmd_decoder_passthrough_doer_prototypes.h
+@@ -546,6 +546,11 @@ error::Error DoTexImage2D(GLenum target,
+                           GLenum type,
+                           GLsizei image_size,
+                           const void* pixels);
++error::Error DoTexStorage2DImageCHROMIUM(GLenum target,
++                                         GLenum internalformat,
++                                         GLenum bufferusage,
++                                         GLsizei width,
++                                         GLsizei height);
+ error::Error DoTexImage3D(GLenum target,
+                           GLint level,
+                           GLint internalformat,
+diff --git gpu/command_buffer/service/gles2_cmd_decoder_passthrough_doers.cc gpu/command_buffer/service/gles2_cmd_decoder_passthrough_doers.cc
+index b1fa5a25da9c7..8ae038ad25c71 100644
+--- gpu/command_buffer/service/gles2_cmd_decoder_passthrough_doers.cc
++++ gpu/command_buffer/service/gles2_cmd_decoder_passthrough_doers.cc
+@@ -3442,6 +3442,61 @@ error::Error GLES2DecoderPassthroughImpl::DoTexStorage2DEXT(
+   return error::kNoError;
+ }
+ 
++error::Error GLES2DecoderPassthroughImpl::DoTexStorage2DImageCHROMIUM(
++    GLenum target,
++    GLenum internalFormat,
++    GLenum bufferUsage,
++    GLsizei width,
++    GLsizei height) {
++  TextureTarget target_enum = GLenumToTextureTarget(target);
++  if (target_enum == TextureTarget::kCubeMap ||
++      target_enum == TextureTarget::kUnkown) {
++    InsertError(GL_INVALID_ENUM, "Invalid target");
++    return error::kNoError;
++  }
++
++  const BoundTexture& bound_texture =
++      bound_textures_[static_cast<size_t>(target_enum)][active_texture_unit_];
++  if (bound_texture.texture == nullptr) {
++    InsertError(GL_INVALID_OPERATION, "No texture bound");
++    return error::kNoError;
++  }
++
++  gfx::BufferFormat buffer_format;
++  if (!GetGFXBufferFormat(internalFormat, &buffer_format)) {
++    InsertError(GL_INVALID_ENUM, "Invalid buffer format");
++    return error::kNoError;
++  }
++
++  gfx::BufferUsage buffer_usage;
++  if (!GetGFXBufferUsage(bufferUsage, &buffer_usage)) {
++    InsertError(GL_INVALID_ENUM, "Invalid buffer usage");
++    return error::kNoError;
++  }
++
++  if (!GetContextGroup()->image_factory()) {
++    InsertError(GL_INVALID_OPERATION, "Cannot create GL image");
++    return error::kNoError;
++  }
++
++  bool is_cleared;
++  scoped_refptr<gl::GLImage> image =
++      GetContextGroup()->image_factory()->CreateAnonymousImage(
++          gfx::Size(width, height), buffer_format, buffer_usage,
++          gpu::kNullSurfaceHandle, &is_cleared);
++  if (!image || !image->BindTexImage(target)) {
++    InsertError(GL_INVALID_OPERATION, "Failed to create or bind GL Image");
++    return error::kNoError;
++  }
++
++  bound_texture.texture->SetLevelImage(target, 0, image.get());
++
++  // Target is already validated
++  UpdateTextureSizeFromTarget(target);
++
++  return error::kNoError;
++}
++
+ error::Error GLES2DecoderPassthroughImpl::DoGenQueriesEXT(
+     GLsizei n,
+     volatile GLuint* queries) {
+@@ -4031,11 +4086,11 @@ error::Error GLES2DecoderPassthroughImpl::DoRequestExtensionCHROMIUM(
+   InitializeFeatureInfo(feature_info_->context_type(),
+                         feature_info_->disallowed_features(), true);
+ 
+-  // Support for texture_storage_image depends on the underlying
++  // Support for CHROMIUM_texture_storage_image depends on the underlying
+   // ImageFactory's ability to create anonymous images.
+   gpu::ImageFactory* image_factory = group_->image_factory();
+   if (image_factory && image_factory->SupportsCreateAnonymousImage()) {
+-    feature_info_->EnableTextureStorageImage();
++    feature_info_->EnableCHROMIUMTextureStorageImage();
+   }
+ 
+   return error::kNoError;
+diff --git gpu/command_buffer/service/gles2_cmd_decoder_passthrough_handlers_autogen.cc gpu/command_buffer/service/gles2_cmd_decoder_passthrough_handlers_autogen.cc
+index 09295b0581d77..b5352ef5eca68 100644
+--- gpu/command_buffer/service/gles2_cmd_decoder_passthrough_handlers_autogen.cc
++++ gpu/command_buffer/service/gles2_cmd_decoder_passthrough_handlers_autogen.cc
+@@ -4441,6 +4441,29 @@ error::Error GLES2DecoderPassthroughImpl::HandleBlendBarrierKHR(
+   return error::kNoError;
+ }
+ 
++error::Error GLES2DecoderPassthroughImpl::HandleTexStorage2DImageCHROMIUM(
++    uint32_t immediate_data_size,
++    const volatile void* cmd_data) {
++  const volatile gles2::cmds::TexStorage2DImageCHROMIUM& c =
++      *static_cast<const volatile gles2::cmds::TexStorage2DImageCHROMIUM*>(
++          cmd_data);
++  if (!features().chromium_texture_storage_image) {
++    return error::kUnknownCommand;
++  }
++
++  GLenum target = static_cast<GLenum>(c.target);
++  GLenum internalFormat = static_cast<GLenum>(c.internalFormat);
++  GLenum bufferUsage = static_cast<GLenum>(c.bufferUsage);
++  GLsizei width = static_cast<GLsizei>(c.width);
++  GLsizei height = static_cast<GLsizei>(c.height);
++  error::Error error = DoTexStorage2DImageCHROMIUM(target, internalFormat,
++                                                   bufferUsage, width, height);
++  if (error != error::kNoError) {
++    return error;
++  }
++  return error::kNoError;
++}
++
+ error::Error GLES2DecoderPassthroughImpl::HandleWindowRectanglesEXTImmediate(
+     uint32_t immediate_data_size,
+     const volatile void* cmd_data) {
+diff --git gpu/command_buffer/tests/gl_texture_storage_unittest.cc gpu/command_buffer/tests/gl_texture_storage_unittest.cc
+index 57a90e23278aa..5c630a23ab083 100644
+--- gpu/command_buffer/tests/gl_texture_storage_unittest.cc
++++ gpu/command_buffer/tests/gl_texture_storage_unittest.cc
+@@ -94,6 +94,9 @@ class TextureStorageTest : public testing::Test {
+     const GLubyte* extensions = glGetString(GL_EXTENSIONS);
+     ext_texture_storage_available_ = strstr(
+         reinterpret_cast<const char*>(extensions), "GL_EXT_texture_storage");
++    chromium_texture_storage_image_available_ =
++        strstr(reinterpret_cast<const char*>(extensions),
++               "GL_CHROMIUM_texture_storage_image");
+   }
+ 
+   void TearDown() override { gl_.Destroy(); }
+@@ -103,6 +106,7 @@ class TextureStorageTest : public testing::Test {
+   GLuint tex_ = 0;
+   GLuint fbo_ = 0;
+   bool ext_texture_storage_available_ = false;
++  bool chromium_texture_storage_image_available_ = false;
+ };
+ 
+ TEST_F(TextureStorageTest, CorrectPixels) {
+@@ -220,6 +224,22 @@ TEST_F(TextureStorageTest, InternalFormatBleedingToTexImage) {
+   EXPECT_NE(static_cast<GLenum>(GL_NO_ERROR), glGetError());
+ }
+ 
++TEST_F(TextureStorageTest, CorrectImagePixels) {
++  if (!chromium_texture_storage_image_available_)
++    return;
++
++  glTexStorage2DImageCHROMIUM(GL_TEXTURE_2D, GL_RGBA8_OES, GL_SCANOUT_CHROMIUM,
++                              2, 2);
++
++  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
++                         tex_, 0);
++
++  uint8_t source_pixels[16] = {1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4};
++  glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 2, 2, GL_RGBA, GL_UNSIGNED_BYTE,
++                  source_pixels);
++  EXPECT_TRUE(GLTestHelper::CheckPixels(0, 0, 2, 2, 0, source_pixels, nullptr));
++}
++
+ TEST_F(TextureStorageTest, LuminanceEmulation) {
+   if (!ext_texture_storage_available_)
+     return;
+diff --git ui/gl/gl_bindings.h ui/gl/gl_bindings.h
+index cec59036dcf9a..09d485c66b46c 100644
+--- ui/gl/gl_bindings.h
++++ ui/gl/gl_bindings.h
+@@ -193,6 +193,9 @@ struct XVisualInfo;
+ // GL_CHROMIUM_texture_filtering_hint
+ #define GL_TEXTURE_FILTERING_HINT_CHROMIUM               0x8AF0
+ 
++// GL_CHROMIUM_texture_storage_image
++#define GL_SCANOUT_CHROMIUM 0x6000
++
+ // GL_OES_texure_3D
+ #define GL_SAMPLER_3D_OES                                0x8B5F
+ 
+diff --git ui/gl/gl_enums_implementation_autogen.h ui/gl/gl_enums_implementation_autogen.h
+index 127e298b5bd0c..a3a800e02aba3 100644
+--- ui/gl/gl_enums_implementation_autogen.h
++++ ui/gl/gl_enums_implementation_autogen.h
+@@ -964,6 +964,10 @@ static const GLEnums::EnumToString enum_to_string_table[] = {
+         0x40000000,
+         "GL_MULTISAMPLE_BUFFER_BIT6_QCOM",
+     },
++    {
++        0x6000,
++        "GL_SCANOUT_CHROMIUM",
++    },
+     {
+         0x6003,
+         "GL_GET_ERROR_QUERY_CHROMIUM",
+-- 
+2.36.1.windows.1
+
