@@ -33,7 +33,7 @@
 // by hand. See the translator.README.txt file in the tools directory for
 // more information.
 //
-// $hash=8e898b1a07653f1c602cfcebf8219feb07b4a1bf$
+// $hash=894c8d2072833bcbc9e5f87e9f97c9b55df18060$
 //
 
 #ifndef CEF_INCLUDE_CAPI_CEF_RENDER_HANDLER_CAPI_H_
@@ -175,6 +175,18 @@ typedef struct _cef_render_handler_t {
                                            size_t dirtyRectsCount,
                                            cef_rect_t const* dirtyRects,
                                            void* shared_handle);
+
+  ///
+  /// New implementation by Jim. Doesn't used keyed_mutexes. There's a bool
+  /// which signals a new texture.
+  ///
+  void(CEF_CALLBACK* on_accelerated_paint2)(struct _cef_render_handler_t* self,
+                                            struct _cef_browser_t* browser,
+                                            cef_paint_element_type_t type,
+                                            size_t dirtyRectsCount,
+                                            cef_rect_t const* dirtyRects,
+                                            void* shared_handle,
+                                            int new_texture);
 
   ///
   /// Called to retrieve the size of the touch handle for the specified
