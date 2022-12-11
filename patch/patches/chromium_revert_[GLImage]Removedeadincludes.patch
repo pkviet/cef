@@ -1,0 +1,115 @@
+From 78ee52898118eff3d81989ae0bd9b53f3e6b51ac Mon Sep 17 00:00:00 2001
+From: pkv <pkv@obsproject.com>
+Date: Sun, 11 Dec 2022 13:14:14 +0100
+Subject: [PATCH] Revert "[GLImage] Remove dead includes of GLImage subclasses"
+
+This reverts commit 7b8b0e9739dd97c41aeb14b2ee9c5c9c0d6b9bdf.
+---
+ gpu/ipc/service/gpu_channel.cc                            | 1 +
+ gpu/ipc/service/image_decode_accelerator_stub_unittest.cc | 6 ++++--
+ media/gpu/windows/d3d11_h264_accelerator.cc               | 1 +
+ media/gpu/windows/d3d11_h265_accelerator.cc               | 1 +
+ media/gpu/windows/d3d11_texture_wrapper.h                 | 1 +
+ ui/gl/gl_surface_egl_surface_control.cc                   | 1 +
+ ui/ozone/platform/x11/gl_ozone_glx.cc                     | 1 +
+ 7 files changed, 10 insertions(+), 2 deletions(-)
+
+diff --git gpu/ipc/service/gpu_channel.cc gpu/ipc/service/gpu_channel.cc
+index 11b35bf10133b..bbf4db73a91f9 100644
+--- gpu/ipc/service/gpu_channel.cc
++++ gpu/ipc/service/gpu_channel.cc
+@@ -56,6 +56,7 @@
+ #include "ipc/ipc_channel.h"
+ #include "mojo/public/cpp/bindings/associated_receiver.h"
+ #include "ui/gl/gl_context.h"
++#include "ui/gl/gl_image_shared_memory.h"
+ #include "ui/gl/gl_surface.h"
+ #include "ui/gl/gl_utils.h"
+ 
+diff --git gpu/ipc/service/image_decode_accelerator_stub_unittest.cc gpu/ipc/service/image_decode_accelerator_stub_unittest.cc
+index 9388cf283c99f..cf888ca83db55 100644
+--- gpu/ipc/service/image_decode_accelerator_stub_unittest.cc
++++ gpu/ipc/service/image_decode_accelerator_stub_unittest.cc
+@@ -77,6 +77,7 @@
+ #include "ui/gfx/geometry/size.h"
+ #include "ui/gfx/gpu_memory_buffer.h"
+ #include "ui/gl/gl_bindings.h"
++#include "ui/gl/gl_image_stub.h"
+ #include "url/gurl.h"
+ 
+ using testing::InSequence;
+@@ -226,8 +227,9 @@ class MockImageDecodeAcceleratorWorker : public ImageDecodeAcceleratorWorker {
+     pending_decodes_.pop();
+     if (success) {
+       // We give out a dummy GpuMemoryBufferHandle as the result: since we mock
+-      // the SharedImage backing in these tests, the only requirement is that
+-      // the NativePixmapHandle has the right number of planes.
++      // the ImageFactory and the gl::GLImage in these tests, the only
++      // requirement is that the NativePixmapHandle has the right number of
++      // planes.
+       auto decode_result = std::make_unique<DecodeResult>();
+       decode_result->handle.type = gfx::GpuMemoryBufferType::NATIVE_PIXMAP;
+       for (size_t plane = 0; plane < gfx::NumberOfPlanesForLinearBufferFormat(
+diff --git media/gpu/windows/d3d11_h264_accelerator.cc media/gpu/windows/d3d11_h264_accelerator.cc
+index 4f3f901444cbd..3b346d8473a50 100644
+--- media/gpu/windows/d3d11_h264_accelerator.cc
++++ media/gpu/windows/d3d11_h264_accelerator.cc
+@@ -21,6 +21,7 @@
+ #include "ui/gfx/color_space.h"
+ #include "ui/gl/gl_bindings.h"
+ #include "ui/gl/gl_context.h"
++#include "ui/gl/gl_image_dxgi.h"
+ #include "ui/gl/gl_surface_egl.h"
+ #include "ui/gl/scoped_binders.h"
+ 
+diff --git media/gpu/windows/d3d11_h265_accelerator.cc media/gpu/windows/d3d11_h265_accelerator.cc
+index ad15bf5216aee..22355190d524c 100644
+--- media/gpu/windows/d3d11_h265_accelerator.cc
++++ media/gpu/windows/d3d11_h265_accelerator.cc
+@@ -23,6 +23,7 @@
+ #include "ui/gfx/color_space.h"
+ #include "ui/gl/gl_bindings.h"
+ #include "ui/gl/gl_context.h"
++#include "ui/gl/gl_image_dxgi.h"
+ #include "ui/gl/gl_surface_egl.h"
+ #include "ui/gl/scoped_binders.h"
+ 
+diff --git media/gpu/windows/d3d11_texture_wrapper.h media/gpu/windows/d3d11_texture_wrapper.h
+index 1e0fde475c3ec..bd82b6aa7b150 100644
+--- media/gpu/windows/d3d11_texture_wrapper.h
++++ media/gpu/windows/d3d11_texture_wrapper.h
+@@ -24,6 +24,7 @@
+ #include "ui/gfx/hdr_metadata.h"
+ #include "ui/gl/gl_bindings.h"
+ #include "ui/gl/gl_context.h"
++#include "ui/gl/gl_image_dxgi.h"
+ #include "ui/gl/gl_surface_egl.h"
+ #include "ui/gl/scoped_binders.h"
+ 
+diff --git ui/gl/gl_surface_egl_surface_control.cc ui/gl/gl_surface_egl_surface_control.cc
+index e6bf35d364e40..9377a0db142f4 100644
+--- ui/gl/gl_surface_egl_surface_control.cc
++++ ui/gl/gl_surface_egl_surface_control.cc
+@@ -21,6 +21,7 @@
+ #include "ui/gl/gl_context.h"
+ #include "ui/gl/gl_features.h"
+ #include "ui/gl/gl_fence_android_native_fence_sync.h"
++#include "ui/gl/gl_image_ahardwarebuffer.h"
+ #include "ui/gl/gl_utils.h"
+ 
+ namespace gl {
+diff --git ui/ozone/platform/x11/gl_ozone_glx.cc ui/ozone/platform/x11/gl_ozone_glx.cc
+index f8de6c9d04502..626d75a624abf 100644
+--- ui/ozone/platform/x11/gl_ozone_glx.cc
++++ ui/ozone/platform/x11/gl_ozone_glx.cc
+@@ -10,6 +10,7 @@
+ #include "ui/gl/gl_context_glx.h"
+ #include "ui/gl/gl_gl_api_implementation.h"
+ #include "ui/gl/gl_glx_api_implementation.h"
++#include "ui/gl/gl_image_glx_native_pixmap.h"
+ #include "ui/gl/gl_surface_glx_x11.h"
+ #include "ui/gl/gl_utils.h"
+ #include "ui/ozone/platform/x11/native_pixmap_glx_binding.h"
+-- 
+2.36.1.windows.1
+
