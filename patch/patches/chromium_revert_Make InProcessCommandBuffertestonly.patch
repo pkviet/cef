@@ -1,0 +1,1300 @@
+From a4a001d14c5d68a7283eedaae6224479f28cabdc Mon Sep 17 00:00:00 2001
+From: pkv <pkv@obsproject.com>
+Date: Sat, 3 Dec 2022 23:04:14 +0100
+Subject: [PATCH] Revert "Make InProcessCommandBuffer testonly"
+
+This reverts commit 927f234fd2e3f62a68ec0c610a95ea50a29343f9.
+---
+ .../gfx/deferred_gpu_command_service.h        | 57 +++++++++++++++++++
+ .../gfx/output_surface_provider_webview.cc    |  3 +-
+ .../gfx/output_surface_provider_webview.h     |  2 +-
+ .../browser/gfx/overlay_processor_webview.cc  |  6 +-
+ .../skia_output_surface_dependency_webview.cc |  2 +-
+ .../browser/gfx/task_forwarding_sequence.h    |  2 +-
+ components/viz/service/BUILD.gn               |  1 +
+ components/viz/service/display/DEPS           |  8 +--
+ components/viz/service/display/display.cc     |  2 +-
+ ...y_compositor_memory_and_task_controller.cc |  4 +-
+ ...ay_compositor_memory_and_task_controller.h |  4 +-
+ .../display/display_resource_provider_skia.cc |  3 +-
+ .../viz/service/display/output_surface.h      |  2 +-
+ .../display/overlay_processor_android.cc      |  2 +-
+ .../display/overlay_processor_interface.h     |  2 +-
+ .../display/overlay_processor_on_gpu.cc       |  2 +-
+ .../in_process_gpu_memory_buffer_manager.cc   |  1 +
+ .../output_surface_provider.h                 |  2 +-
+ .../output_surface_provider_impl.cc           |  2 +-
+ .../skia_output_surface_dependency_impl.cc    |  6 +-
+ .../skia_output_surface_impl.cc               |  2 +-
+ .../skia_output_surface_impl.h                |  2 +-
+ components/viz/service/frame_sinks/DEPS       |  4 +-
+ ..._video_frame_pool_context_provider_impl.cc |  4 +-
+ components/viz/service/main/BUILD.gn          |  2 +-
+ .../main/viz_compositor_thread_runner_impl.cc |  2 +-
+ components/viz/test/BUILD.gn                  |  1 -
+ components/viz/test/DEPS                      |  2 +-
+ .../test/test_in_process_context_provider.cc  |  2 +-
+ gpu/command_buffer/service/BUILD.gn           | 11 ----
+ gpu/ipc/BUILD.gn                              | 13 ++++-
+ .../command_buffer_task_executor.cc           |  2 +-
+ .../command_buffer_task_executor.h            | 10 ++--
+ ...sitor_memory_and_task_controller_on_gpu.cc |  5 +-
+ ...ositor_memory_and_task_controller_on_gpu.h | 11 ++--
+ gpu/ipc/gl_in_process_context.cc              |  2 +-
+ gpu/ipc/gl_in_process_context.h               |  2 +-
+ gpu/ipc/gpu_in_process_thread_service.cc      |  2 +-
+ gpu/ipc/gpu_in_process_thread_service.h       |  4 +-
+ .../gpu_task_scheduler_helper.cc              |  8 +--
+ .../gpu_task_scheduler_helper.h               | 10 ++--
+ gpu/ipc/in_process_command_buffer.cc          | 22 ++++---
+ gpu/ipc/in_process_command_buffer.h           | 24 +++++---
+ gpu/ipc/raster_in_process_context.h           |  2 +-
+ .../service => ipc}/scheduler_sequence.cc     |  2 +-
+ .../service => ipc}/scheduler_sequence.h      | 15 ++---
+ .../shared_image_interface_in_process.cc      | 21 +++----
+ .../shared_image_interface_in_process.h       | 30 ++++------
+ .../service => ipc}/single_task_sequence.h    | 10 ++--
+ gpu/ipc/webgpu_in_process_context.h           |  2 +-
+ 50 files changed, 202 insertions(+), 140 deletions(-)
+ create mode 100644 android_webview/browser/gfx/deferred_gpu_command_service.h
+ rename gpu/{command_buffer/service => ipc}/command_buffer_task_executor.cc (97%)
+ rename gpu/{command_buffer/service => ipc}/command_buffer_task_executor.h (94%)
+ rename gpu/{command_buffer/service => ipc}/display_compositor_memory_and_task_controller_on_gpu.cc (95%)
+ rename gpu/{command_buffer/service => ipc}/display_compositor_memory_and_task_controller_on_gpu.h (90%)
+ rename gpu/{command_buffer/service => ipc}/gpu_task_scheduler_helper.cc (90%)
+ rename gpu/{command_buffer/service => ipc}/gpu_task_scheduler_helper.h (93%)
+ rename gpu/{command_buffer/service => ipc}/scheduler_sequence.cc (98%)
+ rename gpu/{command_buffer/service => ipc}/scheduler_sequence.h (90%)
+ rename gpu/{command_buffer/service => ipc}/shared_image_interface_in_process.cc (96%)
+ rename gpu/{command_buffer/service => ipc}/shared_image_interface_in_process.h (93%)
+ rename gpu/{command_buffer/service => ipc}/single_task_sequence.h (90%)
+
+diff --git android_webview/browser/gfx/deferred_gpu_command_service.h android_webview/browser/gfx/deferred_gpu_command_service.h
+new file mode 100644
+index 0000000000000..abb5a3b32e503
+--- /dev/null
++++ android_webview/browser/gfx/deferred_gpu_command_service.h
+@@ -0,0 +1,57 @@
++// Copyright 2014 The Chromium Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef ANDROID_WEBVIEW_BROWSER_GFX_DEFERRED_GPU_COMMAND_SERVICE_H_
++#define ANDROID_WEBVIEW_BROWSER_GFX_DEFERRED_GPU_COMMAND_SERVICE_H_
++
++#include "base/memory/raw_ptr.h"
++#include "gpu/ipc/command_buffer_task_executor.h"
++
++namespace gl {
++class GLShareGroup;
++}
++
++namespace android_webview {
++
++class GpuServiceWebView;
++class TaskQueueWebView;
++
++// Implementation for gpu service objects accessor for command buffer WebView.
++class DeferredGpuCommandService : public gpu::CommandBufferTaskExecutor {
++ public:
++  static DeferredGpuCommandService* GetInstance();
++
++  DeferredGpuCommandService(const DeferredGpuCommandService&) = delete;
++  DeferredGpuCommandService& operator=(const DeferredGpuCommandService&) =
++      delete;
++
++  // gpu::CommandBufferTaskExecutor implementation.
++  bool ForceVirtualizedGLContexts() const override;
++  bool ShouldCreateMemoryTracker() const override;
++  std::unique_ptr<gpu::SingleTaskSequence> CreateSequence() override;
++  void ScheduleOutOfOrderTask(base::OnceClosure task) override;
++  void ScheduleDelayedWork(base::OnceClosure task) override;
++  void PostNonNestableToClient(base::OnceClosure callback) override;
++  scoped_refptr<gpu::SharedContextState> GetSharedContextState() override;
++  scoped_refptr<gl::GLShareGroup> GetShareGroup() override;
++
++ protected:
++  ~DeferredGpuCommandService() override;
++
++ private:
++  friend class TaskForwardingSequence;
++
++  DeferredGpuCommandService(TaskQueueWebView* task_queue,
++                            GpuServiceWebView* gpu_service);
++
++  static DeferredGpuCommandService* CreateDeferredGpuCommandService();
++
++  raw_ptr<TaskQueueWebView> task_queue_;
++  raw_ptr<GpuServiceWebView> gpu_service_;
++  scoped_refptr<gl::GLShareGroup> share_group_;
++};
++
++}  // namespace android_webview
++
++#endif  // ANDROID_WEBVIEW_BROWSER_GFX_DEFERRED_GPU_COMMAND_SERVICE_H_
+diff --git android_webview/browser/gfx/output_surface_provider_webview.cc android_webview/browser/gfx/output_surface_provider_webview.cc
+index d346203581e56..9de4a4566b24c 100644
+--- android_webview/browser/gfx/output_surface_provider_webview.cc
++++ android_webview/browser/gfx/output_surface_provider_webview.cc
+@@ -19,10 +19,9 @@
+ #include "base/no_destructor.h"
+ #include "components/viz/common/features.h"
+ #include "components/viz/service/display_embedder/skia_output_surface_impl.h"
+-#include "gpu/command_buffer/service/feature_info.h"
+-#include "gpu/command_buffer/service/single_task_sequence.h"
+ #include "gpu/config/gpu_finch_features.h"
+ #include "gpu/config/gpu_switches.h"
++#include "gpu/ipc/single_task_sequence.h"
+ #include "ui/base/ui_base_switches.h"
+ #include "ui/gfx/geometry/size.h"
+ #include "ui/gl/gl_bindings.h"
+diff --git android_webview/browser/gfx/output_surface_provider_webview.h android_webview/browser/gfx/output_surface_provider_webview.h
+index c8164c47f9ad5..4ad5259d4d15e 100644
+--- android_webview/browser/gfx/output_surface_provider_webview.h
++++ android_webview/browser/gfx/output_surface_provider_webview.h
+@@ -11,8 +11,8 @@
+ #include "base/memory/raw_ptr.h"
+ #include "base/memory/ref_counted.h"
+ #include "components/viz/common/display/renderer_settings.h"
+-#include "gpu/command_buffer/service/gpu_task_scheduler_helper.h"
+ #include "gpu/command_buffer/service/shared_context_state.h"
++#include "gpu/ipc/gpu_task_scheduler_helper.h"
+ 
+ namespace gpu {
+ class SharedContextState;
+diff --git android_webview/browser/gfx/overlay_processor_webview.cc android_webview/browser/gfx/overlay_processor_webview.cc
+index 9a04996a439c4..ba6c3819b0ae1 100644
+--- android_webview/browser/gfx/overlay_processor_webview.cc
++++ android_webview/browser/gfx/overlay_processor_webview.cc
+@@ -20,12 +20,12 @@
+ #include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
+ #include "components/viz/service/gl/gpu_service_impl.h"
+ #include "components/viz/service/surfaces/surface.h"
+-#include "gpu/command_buffer/service/display_compositor_memory_and_task_controller_on_gpu.h"
+ #include "gpu/command_buffer/service/memory_tracking.h"
+-#include "gpu/command_buffer/service/scheduler_sequence.h"
+ #include "gpu/command_buffer/service/shared_image/shared_image_manager.h"
+ #include "gpu/command_buffer/service/shared_image/shared_image_representation.h"
+-#include "gpu/command_buffer/service/single_task_sequence.h"
++#include "gpu/ipc/display_compositor_memory_and_task_controller_on_gpu.h"
++#include "gpu/ipc/scheduler_sequence.h"
++#include "gpu/ipc/single_task_sequence.h"
+ #include "ui/gfx/android/android_surface_control_compat.h"
+ #include "ui/gfx/geometry/rect_conversions.h"
+ 
+diff --git android_webview/browser/gfx/skia_output_surface_dependency_webview.cc android_webview/browser/gfx/skia_output_surface_dependency_webview.cc
+index 2ad31e923348c..b2ef1009cd4d0 100644
+--- android_webview/browser/gfx/skia_output_surface_dependency_webview.cc
++++ android_webview/browser/gfx/skia_output_surface_dependency_webview.cc
+@@ -10,7 +10,7 @@
+ #include "android_webview/browser/gfx/task_queue_webview.h"
+ #include "base/callback_helpers.h"
+ #include "base/logging.h"
+-#include "gpu/command_buffer/service/gpu_task_scheduler_helper.h"
++#include "gpu/ipc/gpu_task_scheduler_helper.h"
+ #include "ui/gl/gl_surface.h"
+ 
+ namespace android_webview {
+diff --git android_webview/browser/gfx/task_forwarding_sequence.h android_webview/browser/gfx/task_forwarding_sequence.h
+index 4afe8e9cb838c..ccfdd3116e078 100644
+--- android_webview/browser/gfx/task_forwarding_sequence.h
++++ android_webview/browser/gfx/task_forwarding_sequence.h
+@@ -11,7 +11,7 @@
+ #include <utility>
+ 
+ #include "base/memory/raw_ptr.h"
+-#include "gpu/command_buffer/service/single_task_sequence.h"
++#include "gpu/ipc/single_task_sequence.h"
+ 
+ namespace gpu {
+ class Scheduler;
+diff --git components/viz/service/BUILD.gn components/viz/service/BUILD.gn
+index f8ceaa5f44852..39c3b28b4adb7 100644
+--- components/viz/service/BUILD.gn
++++ components/viz/service/BUILD.gn
+@@ -261,6 +261,7 @@ viz_component("service") {
+     "//cc/debug",
+     "//components/viz/common",
+     "//gpu/command_buffer/service:gles2",
++    "//gpu/ipc:gl_in_process_context",
+     "//gpu/ipc/service",
+     "//gpu/vulkan:buildflags",
+     "//media/gpu/ipc/service",
+diff --git components/viz/service/display/DEPS components/viz/service/display/DEPS
+index 2e7a97a885a27..74bed60b8e188 100644
+--- components/viz/service/display/DEPS
++++ components/viz/service/display/DEPS
+@@ -44,10 +44,10 @@ include_rules = [
+   "+ui/gl/gpu_switching_observer.h",
+   "+ui/gl/trace_util.h",
+   "+gpu/ipc/common/vulkan_ycbcr_info.h",
+-  "+gpu/command_buffer/service/gpu_task_scheduler_helper.h",
+-  "+gpu/command_buffer/service/display_compositor_memory_and_task_controller_on_gpu.h",
+-  "+gpu/command_buffer/service/scheduler_sequence.h",
+-  "+gpu/command_buffer/service/shared_image_interface_in_process.h",
++  "+gpu/ipc/gpu_task_scheduler_helper.h",
++  "+gpu/ipc/display_compositor_memory_and_task_controller_on_gpu.h",
++  "+gpu/ipc/scheduler_sequence.h",
++  "+gpu/ipc/shared_image_interface_in_process.h",
+   "+gpu/command_buffer/service/shared_image_factory.h",
+   "+gpu/command_buffer/service/shared_image_manager.h",
+   "+gpu/config/gpu_driver_bug_workaround_type.h",
+diff --git components/viz/service/display/display.cc components/viz/service/display/display.cc
+index 78b1da49991da..4d20ad262181d 100644
+--- components/viz/service/display/display.cc
++++ components/viz/service/display/display.cc
+@@ -50,7 +50,7 @@
+ #include "components/viz/service/display/surface_aggregator.h"
+ #include "components/viz/service/surfaces/surface.h"
+ #include "components/viz/service/surfaces/surface_manager.h"
+-#include "gpu/command_buffer/service/scheduler_sequence.h"
++#include "gpu/ipc/scheduler_sequence.h"
+ #include "services/viz/public/mojom/compositing/compositor_frame_sink.mojom.h"
+ #include "third_party/abseil-cpp/absl/types/optional.h"
+ #include "third_party/perfetto/protos/perfetto/trace/track_event/chrome_latency_info.pbzero.h"
+diff --git components/viz/service/display/display_compositor_memory_and_task_controller.cc components/viz/service/display/display_compositor_memory_and_task_controller.cc
+index 8326257efb729..299391c43a221 100644
+--- components/viz/service/display/display_compositor_memory_and_task_controller.cc
++++ components/viz/service/display/display_compositor_memory_and_task_controller.cc
+@@ -9,8 +9,8 @@
+ #include "base/bind.h"
+ #include "base/synchronization/waitable_event.h"
+ #include "components/viz/service/display_embedder/skia_output_surface_dependency.h"
+-#include "gpu/command_buffer/service/scheduler_sequence.h"
+-#include "gpu/command_buffer/service/shared_image_interface_in_process.h"
++#include "gpu/ipc/scheduler_sequence.h"
++#include "gpu/ipc/shared_image_interface_in_process.h"
+ 
+ namespace viz {
+ 
+diff --git components/viz/service/display/display_compositor_memory_and_task_controller.h components/viz/service/display/display_compositor_memory_and_task_controller.h
+index 125aa6e51891c..d559d1a1c1b4b 100644
+--- components/viz/service/display/display_compositor_memory_and_task_controller.h
++++ components/viz/service/display/display_compositor_memory_and_task_controller.h
+@@ -8,8 +8,8 @@
+ #include <memory>
+ 
+ #include "components/viz/service/viz_service_export.h"
+-#include "gpu/command_buffer/service/display_compositor_memory_and_task_controller_on_gpu.h"
+-#include "gpu/command_buffer/service/gpu_task_scheduler_helper.h"
++#include "gpu/ipc/display_compositor_memory_and_task_controller_on_gpu.h"
++#include "gpu/ipc/gpu_task_scheduler_helper.h"
+ 
+ namespace base {
+ class WaitableEvent;
+diff --git components/viz/service/display/display_resource_provider_skia.cc components/viz/service/display/display_resource_provider_skia.cc
+index 3e42d7f374201..709bb3d20ce54 100644
+--- components/viz/service/display/display_resource_provider_skia.cc
++++ components/viz/service/display/display_resource_provider_skia.cc
+@@ -11,8 +11,7 @@
+ #include "base/containers/contains.h"
+ #include "base/containers/flat_set.h"
+ #include "build/build_config.h"
+-#include "components/viz/service/display/resource_fence.h"
+-#include "gpu/command_buffer/service/scheduler_sequence.h"
++#include "gpu/ipc/scheduler_sequence.h"
+ #include "third_party/skia/include/core/SkColorSpace.h"
+ 
+ namespace viz {
+diff --git components/viz/service/display/output_surface.h components/viz/service/display/output_surface.h
+index 0e5ae19feb7b0..03dc744e6aca0 100644
+--- components/viz/service/display/output_surface.h
++++ components/viz/service/display/output_surface.h
+@@ -19,8 +19,8 @@
+ #include "components/viz/service/display/software_output_device.h"
+ #include "components/viz/service/viz_service_export.h"
+ #include "gpu/command_buffer/common/mailbox.h"
+-#include "gpu/command_buffer/service/gpu_task_scheduler_helper.h"
+ #include "gpu/ipc/common/surface_handle.h"
++#include "gpu/ipc/gpu_task_scheduler_helper.h"
+ #include "mojo/public/cpp/bindings/pending_receiver.h"
+ #include "third_party/abseil-cpp/absl/types/optional.h"
+ #include "third_party/skia/include/core/SkM44.h"
+diff --git components/viz/service/display/overlay_processor_android.cc components/viz/service/display/overlay_processor_android.cc
+index d9f15236b968a..2180b6f614755 100644
+--- components/viz/service/display/overlay_processor_android.cc
++++ components/viz/service/display/overlay_processor_android.cc
+@@ -14,7 +14,7 @@
+ #include "components/viz/service/display/overlay_processor_on_gpu.h"
+ #include "components/viz/service/display/overlay_strategy_underlay.h"
+ #include "components/viz/service/display/skia_output_surface.h"
+-#include "gpu/command_buffer/service/scheduler_sequence.h"
++#include "gpu/ipc/scheduler_sequence.h"
+ #include "ui/gfx/geometry/rect_conversions.h"
+ 
+ namespace viz {
+diff --git components/viz/service/display/overlay_processor_interface.h components/viz/service/display/overlay_processor_interface.h
+index 136d1ea5c907c..cb27b7a00bd56 100644
+--- components/viz/service/display/overlay_processor_interface.h
++++ components/viz/service/display/overlay_processor_interface.h
+@@ -15,8 +15,8 @@
+ #include "components/viz/service/display/output_surface.h"
+ #include "components/viz/service/display/overlay_candidate.h"
+ #include "components/viz/service/viz_service_export.h"
+-#include "gpu/command_buffer/service/gpu_task_scheduler_helper.h"
+ #include "gpu/ipc/common/surface_handle.h"
++#include "gpu/ipc/gpu_task_scheduler_helper.h"
+ #include "ui/gfx/ca_layer_result.h"
+ #include "ui/gfx/geometry/rrect_f.h"
+ #include "ui/gfx/overlay_priority_hint.h"
+diff --git components/viz/service/display/overlay_processor_on_gpu.cc components/viz/service/display/overlay_processor_on_gpu.cc
+index f262df308bb25..08b63410a4dfc 100644
+--- components/viz/service/display/overlay_processor_on_gpu.cc
++++ components/viz/service/display/overlay_processor_on_gpu.cc
+@@ -5,9 +5,9 @@
+ #include "components/viz/service/display/overlay_processor_on_gpu.h"
+ 
+ #include "build/build_config.h"
+-#include "gpu/command_buffer/service/display_compositor_memory_and_task_controller_on_gpu.h"
+ #include "gpu/command_buffer/service/shared_image/shared_image_factory.h"
+ #include "gpu/command_buffer/service/shared_image/shared_image_manager.h"
++#include "gpu/ipc/display_compositor_memory_and_task_controller_on_gpu.h"
+ #include "ui/gfx/geometry/rect_conversions.h"
+ 
+ namespace viz {
+diff --git components/viz/service/display_embedder/in_process_gpu_memory_buffer_manager.cc components/viz/service/display_embedder/in_process_gpu_memory_buffer_manager.cc
+index 6f4b8bbb5b247..bd353f4fbca29 100644
+--- components/viz/service/display_embedder/in_process_gpu_memory_buffer_manager.cc
++++ components/viz/service/display_embedder/in_process_gpu_memory_buffer_manager.cc
+@@ -14,6 +14,7 @@
+ #include "gpu/command_buffer/service/sync_point_manager.h"
+ #include "gpu/ipc/common/gpu_client_ids.h"
+ #include "gpu/ipc/common/gpu_memory_buffer_impl.h"
++#include "gpu/ipc/in_process_command_buffer.h"
+ #include "gpu/ipc/service/gpu_memory_buffer_factory.h"
+ 
+ namespace viz {
+diff --git components/viz/service/display_embedder/output_surface_provider.h components/viz/service/display_embedder/output_surface_provider.h
+index 28f44e5df4a35..ff8c242467f57 100644
+--- components/viz/service/display_embedder/output_surface_provider.h
++++ components/viz/service/display_embedder/output_surface_provider.h
+@@ -8,8 +8,8 @@
+ #include <memory>
+ 
+ #include "components/viz/service/display/display_compositor_memory_and_task_controller.h"
+-#include "gpu/command_buffer/service/gpu_task_scheduler_helper.h"
+ #include "gpu/ipc/common/surface_handle.h"
++#include "gpu/ipc/gpu_task_scheduler_helper.h"
+ #include "services/viz/privileged/mojom/compositing/display_private.mojom.h"
+ 
+ namespace viz {
+diff --git components/viz/service/display_embedder/output_surface_provider_impl.cc components/viz/service/display_embedder/output_surface_provider_impl.cc
+index eca3105036621..7a1a71fd9b133 100644
+--- components/viz/service/display_embedder/output_surface_provider_impl.cc
++++ components/viz/service/display_embedder/output_surface_provider_impl.cc
+@@ -26,9 +26,9 @@
+ #include "components/viz/service/display_embedder/software_output_surface.h"
+ #include "components/viz/service/gl/gpu_service_impl.h"
+ #include "gpu/command_buffer/client/shared_memory_limits.h"
+-#include "gpu/command_buffer/service/scheduler_sequence.h"
+ #include "gpu/config/gpu_finch_features.h"
+ #include "gpu/ipc/common/surface_handle.h"
++#include "gpu/ipc/scheduler_sequence.h"
+ #include "ui/base/ui_base_switches.h"
+ 
+ #if BUILDFLAG(IS_WIN)
+diff --git components/viz/service/display_embedder/skia_output_surface_dependency_impl.cc components/viz/service/display_embedder/skia_output_surface_dependency_impl.cc
+index 21dc82058f837..5f182fa802fd1 100644
+--- components/viz/service/display_embedder/skia_output_surface_dependency_impl.cc
++++ components/viz/service/display_embedder/skia_output_surface_dependency_impl.cc
+@@ -12,10 +12,10 @@
+ #include "base/threading/thread_task_runner_handle.h"
+ #include "build/build_config.h"
+ #include "components/viz/service/gl/gpu_service_impl.h"
+-#include "gpu/command_buffer/service/command_buffer_task_executor.h"
+-#include "gpu/command_buffer/service/gpu_task_scheduler_helper.h"
+ #include "gpu/command_buffer/service/scheduler.h"
+-#include "gpu/command_buffer/service/scheduler_sequence.h"
++#include "gpu/ipc/command_buffer_task_executor.h"
++#include "gpu/ipc/gpu_task_scheduler_helper.h"
++#include "gpu/ipc/scheduler_sequence.h"
+ #include "gpu/ipc/service/image_transport_surface.h"
+ #include "ui/gl/init/gl_factory.h"
+ 
+diff --git components/viz/service/display_embedder/skia_output_surface_impl.cc components/viz/service/display_embedder/skia_output_surface_impl.cc
+index 0b86ea49bd165..092d46af98451 100644
+--- components/viz/service/display_embedder/skia_output_surface_impl.cc
++++ components/viz/service/display_embedder/skia_output_surface_impl.cc
+@@ -38,9 +38,9 @@
+ #include "gpu/command_buffer/service/scheduler.h"
+ #include "gpu/command_buffer/service/shared_image/shared_image_factory.h"
+ #include "gpu/command_buffer/service/shared_image/shared_image_representation.h"
+-#include "gpu/command_buffer/service/single_task_sequence.h"
+ #include "gpu/command_buffer/service/skia_utils.h"
+ #include "gpu/ipc/service/context_url.h"
++#include "gpu/ipc/single_task_sequence.h"
+ #include "gpu/vulkan/buildflags.h"
+ #include "skia/buildflags.h"
+ #include "skia/ext/legacy_display_globals.h"
+diff --git components/viz/service/display_embedder/skia_output_surface_impl.h components/viz/service/display_embedder/skia_output_surface_impl.h
+index c1ee41dba2212..c8442c197f387 100644
+--- components/viz/service/display_embedder/skia_output_surface_impl.h
++++ components/viz/service/display_embedder/skia_output_surface_impl.h
+@@ -24,12 +24,12 @@
+ #include "components/viz/service/viz_service_export.h"
+ #include "gpu/command_buffer/common/sync_token.h"
+ #include "gpu/ipc/common/vulkan_ycbcr_info.h"
++#include "gpu/ipc/in_process_command_buffer.h"
+ #include "mojo/public/cpp/bindings/pending_receiver.h"
+ #include "third_party/abseil-cpp/absl/types/optional.h"
+ #include "third_party/skia/include/core/SkDeferredDisplayListRecorder.h"
+ #include "third_party/skia/include/core/SkOverdrawCanvas.h"
+ #include "third_party/skia/include/core/SkSurfaceCharacterization.h"
+-#include "ui/gfx/presentation_feedback.h"
+ 
+ namespace gfx {
+ namespace mojom {
+diff --git components/viz/service/frame_sinks/DEPS components/viz/service/frame_sinks/DEPS
+index b62ceacabcb6b..e6ea7ec258c75 100644
+--- components/viz/service/frame_sinks/DEPS
++++ components/viz/service/frame_sinks/DEPS
+@@ -11,8 +11,8 @@ include_rules = [
+   "+components/viz/service/transitions",
+   "+gpu/command_buffer/service/shared_context_state.h",
+   "+gpu/ipc/common",
+-  "+gpu/command_buffer/service/scheduler_sequence.h",
+-  "+gpu/command_buffer/service/shared_image_interface_in_process.h",
++  "+gpu/ipc/scheduler_sequence.h",
++  "+gpu/ipc/shared_image_interface_in_process.h",
+   "+mojo/public",
+   "+media/video",
+   "+ui/gl/gl_features.h",
+diff --git components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider_impl.cc components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider_impl.cc
+index 68e762a8671aa..05bbd4317a398 100644
+--- components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider_impl.cc
++++ components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider_impl.cc
+@@ -12,9 +12,9 @@
+ #include "base/task/bind_post_task.h"
+ #include "components/viz/service/display_embedder/in_process_gpu_memory_buffer_manager.h"
+ #include "components/viz/service/gl/gpu_service_impl.h"
+-#include "gpu/command_buffer/service/scheduler_sequence.h"
+ #include "gpu/command_buffer/service/shared_context_state.h"
+-#include "gpu/command_buffer/service/shared_image_interface_in_process.h"
++#include "gpu/ipc/scheduler_sequence.h"
++#include "gpu/ipc/shared_image_interface_in_process.h"
+ 
+ namespace viz {
+ 
+diff --git components/viz/service/main/BUILD.gn components/viz/service/main/BUILD.gn
+index caddcbc3fe789..05596e8313b02 100644
+--- components/viz/service/main/BUILD.gn
++++ components/viz/service/main/BUILD.gn
+@@ -25,7 +25,7 @@ source_set("main") {
+     "//components/discardable_memory/public/mojom",
+     "//components/ui_devtools",
+     "//components/viz/service",
+-    "//gpu/command_buffer/service:gles2",
++    "//gpu/ipc:gl_in_process_context",
+     "//gpu/ipc/common",
+     "//gpu/ipc/service",
+     "//ipc",
+diff --git components/viz/service/main/viz_compositor_thread_runner_impl.cc components/viz/service/main/viz_compositor_thread_runner_impl.cc
+index 9c85a07e0348c..47a9fa511749f 100644
+--- components/viz/service/main/viz_compositor_thread_runner_impl.cc
++++ components/viz/service/main/viz_compositor_thread_runner_impl.cc
+@@ -26,9 +26,9 @@
+ #include "components/viz/service/frame_sinks/gmb_video_frame_pool_context_provider_impl.h"
+ #include "components/viz/service/gl/gpu_service_impl.h"
+ #include "components/viz/service/performance_hint/hint_session.h"
+-#include "gpu/command_buffer/service/scheduler_sequence.h"
+ #include "gpu/config/gpu_finch_features.h"
+ #include "gpu/config/gpu_switches.h"
++#include "gpu/ipc/scheduler_sequence.h"
+ #include "gpu/ipc/service/gpu_memory_buffer_factory.h"
+ #include "ui/gfx/switches.h"
+ 
+diff --git components/viz/test/BUILD.gn components/viz/test/BUILD.gn
+index e89acb338f253..5f82bafab4564 100644
+--- components/viz/test/BUILD.gn
++++ components/viz/test/BUILD.gn
+@@ -107,7 +107,6 @@ viz_static_library("test_support") {
+     "//gpu:test_support",
+     "//gpu/command_buffer/client:gles2_implementation",
+     "//gpu/command_buffer/client:raster_interface",
+-    "//gpu/ipc:gl_in_process_context",
+     "//gpu/skia_bindings",
+     "//services/viz/privileged/mojom",
+     "//testing/gmock",
+diff --git components/viz/test/DEPS components/viz/test/DEPS
+index 7087ae69166fe..eeacfdff7a741 100644
+--- components/viz/test/DEPS
++++ components/viz/test/DEPS
+@@ -25,7 +25,7 @@ include_rules = [
+   "+gpu/config/skia_limits.h",
+   "+gpu/GLES2",
+   "+gpu/ipc/gl_in_process_context.h",
+-  "+gpu/command_buffer/service/gpu_task_scheduler_helper.h",
++  "+gpu/ipc/gpu_task_scheduler_helper.h",
+   "+gpu/ipc/raster_in_process_context.h",
+   "+gpu/ipc/test_gpu_thread_holder.h",
+   "+gpu/skia_bindings/grcontext_for_gles2_interface.h",
+diff --git components/viz/test/test_in_process_context_provider.cc components/viz/test/test_in_process_context_provider.cc
+index 47eba3cf2a26a..bd1a3419b8a57 100644
+--- components/viz/test/test_in_process_context_provider.cc
++++ components/viz/test/test_in_process_context_provider.cc
+@@ -22,9 +22,9 @@
+ #include "gpu/command_buffer/client/raster_implementation_gles.h"
+ #include "gpu/command_buffer/client/shared_memory_limits.h"
+ #include "gpu/command_buffer/common/context_creation_attribs.h"
+-#include "gpu/command_buffer/service/gpu_task_scheduler_helper.h"
+ #include "gpu/config/skia_limits.h"
+ #include "gpu/ipc/gl_in_process_context.h"
++#include "gpu/ipc/gpu_task_scheduler_helper.h"
+ #include "gpu/ipc/raster_in_process_context.h"
+ #include "gpu/ipc/test_gpu_thread_holder.h"
+ #include "gpu/skia_bindings/grcontext_for_gles2_interface.h"
+diff --git gpu/command_buffer/service/BUILD.gn gpu/command_buffer/service/BUILD.gn
+index 6548a939cfbca..580be12baa41e 100644
+--- gpu/command_buffer/service/BUILD.gn
++++ gpu/command_buffer/service/BUILD.gn
+@@ -109,8 +109,6 @@ target(link_target_type, "gles2_sources") {
+     "buffer_manager.cc",
+     "buffer_manager.h",
+     "client_service_map.h",
+-    "command_buffer_task_executor.cc",
+-    "command_buffer_task_executor.h",
+     "context_group.cc",
+     "context_group.h",
+     "context_state.cc",
+@@ -118,8 +116,6 @@ target(link_target_type, "gles2_sources") {
+     "context_state_autogen.h",
+     "context_state_impl_autogen.h",
+     "decoder_context.h",
+-    "display_compositor_memory_and_task_controller_on_gpu.cc",
+-    "display_compositor_memory_and_task_controller_on_gpu.h",
+     "error_state.cc",
+     "error_state.h",
+     "feature_info.cc",
+@@ -164,8 +160,6 @@ target(link_target_type, "gles2_sources") {
+     "gpu_fence_manager.h",
+     "gpu_state_tracer.cc",
+     "gpu_state_tracer.h",
+-    "gpu_task_scheduler_helper.cc",
+-    "gpu_task_scheduler_helper.h",
+     "gpu_tracer.cc",
+     "gpu_tracer.h",
+     "gr_cache_controller.cc",
+@@ -213,8 +207,6 @@ target(link_target_type, "gles2_sources") {
+     "renderbuffer_manager.h",
+     "sampler_manager.cc",
+     "sampler_manager.h",
+-    "scheduler_sequence.cc",
+-    "scheduler_sequence.h",
+     "service_discardable_manager.cc",
+     "service_discardable_manager.h",
+     "service_font_manager.cc",
+@@ -269,11 +261,8 @@ target(link_target_type, "gles2_sources") {
+     "shared_image/skia_gl_image_representation.h",
+     "shared_image/wrapped_sk_image_backing_factory.cc",
+     "shared_image/wrapped_sk_image_backing_factory.h",
+-    "shared_image_interface_in_process.cc",
+-    "shared_image_interface_in_process.h",
+     "shared_memory_region_wrapper.cc",
+     "shared_memory_region_wrapper.h",
+-    "single_task_sequence.h",
+     "skia_utils.cc",
+     "skia_utils.h",
+     "texture_manager.cc",
+diff --git gpu/ipc/BUILD.gn gpu/ipc/BUILD.gn
+index e2feaf99f22ed..16261432caef9 100644
+--- gpu/ipc/BUILD.gn
++++ gpu/ipc/BUILD.gn
+@@ -5,16 +5,25 @@
+ import("//build/config/ui.gni")
+ 
+ component("gl_in_process_context") {
+-  testonly = true
+-
+   sources = [
++    "command_buffer_task_executor.cc",
++    "command_buffer_task_executor.h",
++    "display_compositor_memory_and_task_controller_on_gpu.cc",
++    "display_compositor_memory_and_task_controller_on_gpu.h",
+     "gl_in_process_context.cc",
+     "gl_in_process_context.h",
+     "gl_in_process_context_export.h",
+     "gpu_in_process_thread_service.cc",
+     "gpu_in_process_thread_service.h",
++    "gpu_task_scheduler_helper.cc",
++    "gpu_task_scheduler_helper.h",
+     "in_process_command_buffer.cc",
+     "in_process_command_buffer.h",
++    "scheduler_sequence.cc",
++    "scheduler_sequence.h",
++    "shared_image_interface_in_process.cc",
++    "shared_image_interface_in_process.h",
++    "single_task_sequence.h",
+   ]
+ 
+   defines = [ "GL_IN_PROCESS_CONTEXT_IMPLEMENTATION" ]
+diff --git gpu/command_buffer/service/command_buffer_task_executor.cc gpu/ipc/command_buffer_task_executor.cc
+similarity index 97%
+rename from gpu/command_buffer/service/command_buffer_task_executor.cc
+rename to gpu/ipc/command_buffer_task_executor.cc
+index 4eb4304b80143..4384e00c7a948 100644
+--- gpu/command_buffer/service/command_buffer_task_executor.cc
++++ gpu/ipc/command_buffer_task_executor.cc
+@@ -2,7 +2,7 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
+-#include "gpu/command_buffer/service/command_buffer_task_executor.h"
++#include "gpu/ipc/command_buffer_task_executor.h"
+ 
+ #include "gpu/command_buffer/service/gpu_tracer.h"
+ #include "gpu/command_buffer/service/mailbox_manager_factory.h"
+diff --git gpu/command_buffer/service/command_buffer_task_executor.h gpu/ipc/command_buffer_task_executor.h
+similarity index 94%
+rename from gpu/command_buffer/service/command_buffer_task_executor.h
+rename to gpu/ipc/command_buffer_task_executor.h
+index 56f94e71238cd..f3b1f7054e775 100644
+--- gpu/command_buffer/service/command_buffer_task_executor.h
++++ gpu/ipc/command_buffer_task_executor.h
+@@ -2,8 +2,8 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
+-#ifndef GPU_COMMAND_BUFFER_SERVICE_COMMAND_BUFFER_TASK_EXECUTOR_H_
+-#define GPU_COMMAND_BUFFER_SERVICE_COMMAND_BUFFER_TASK_EXECUTOR_H_
++#ifndef GPU_IPC_COMMAND_BUFFER_TASK_EXECUTOR_H_
++#define GPU_IPC_COMMAND_BUFFER_TASK_EXECUTOR_H_
+ 
+ #include <memory>
+ #include <vector>
+@@ -21,7 +21,7 @@
+ #include "gpu/command_buffer/service/shared_image/shared_image_manager.h"
+ #include "gpu/config/gpu_feature_info.h"
+ #include "gpu/config/gpu_preferences.h"
+-#include "gpu/gpu_gles2_export.h"
++#include "gpu/ipc/gl_in_process_context_export.h"
+ #include "ui/gl/gl_surface_format.h"
+ 
+ namespace gl {
+@@ -42,7 +42,7 @@ class ProgramCache;
+ // the GPU thread used by InProcessCommandBuffer.
+ // TODO(crbug.com/1247756): This class should be revisited as lots of
+ // functionality isn't needed anymore with GLRenderer deleted.
+-class GPU_GLES2_EXPORT CommandBufferTaskExecutor {
++class GL_IN_PROCESS_CONTEXT_EXPORT CommandBufferTaskExecutor {
+  public:
+   CommandBufferTaskExecutor(const GpuPreferences& gpu_preferences,
+                             const GpuFeatureInfo& gpu_feature_info,
+@@ -130,4 +130,4 @@ class GPU_GLES2_EXPORT CommandBufferTaskExecutor {
+ 
+ }  // namespace gpu
+ 
+-#endif  // GPU_COMMAND_BUFFER_SERVICE_COMMAND_BUFFER_TASK_EXECUTOR_H_
++#endif  // GPU_IPC_COMMAND_BUFFER_TASK_EXECUTOR_H_
+diff --git gpu/command_buffer/service/display_compositor_memory_and_task_controller_on_gpu.cc gpu/ipc/display_compositor_memory_and_task_controller_on_gpu.cc
+similarity index 95%
+rename from gpu/command_buffer/service/display_compositor_memory_and_task_controller_on_gpu.cc
+rename to gpu/ipc/display_compositor_memory_and_task_controller_on_gpu.cc
+index 11420501517b2..7551bab11f1ca 100644
+--- gpu/command_buffer/service/display_compositor_memory_and_task_controller_on_gpu.cc
++++ gpu/ipc/display_compositor_memory_and_task_controller_on_gpu.cc
+@@ -2,14 +2,15 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
+-#include "gpu/command_buffer/service/display_compositor_memory_and_task_controller_on_gpu.h"
++#include "gpu/ipc/display_compositor_memory_and_task_controller_on_gpu.h"
+ 
+ #include "base/atomic_sequence_num.h"
+ #include "base/threading/thread_task_runner_handle.h"
+ #include "base/trace_event/memory_dump_manager.h"
+-#include "gpu/command_buffer/service/command_buffer_task_executor.h"
+ #include "gpu/command_buffer/service/gpu_command_buffer_memory_tracker.h"
++#include "gpu/ipc/command_buffer_task_executor.h"
+ #include "gpu/ipc/common/gpu_client_ids.h"
++#include "gpu/ipc/service/gpu_channel_manager.h"
+ 
+ namespace gpu {
+ 
+diff --git gpu/command_buffer/service/display_compositor_memory_and_task_controller_on_gpu.h gpu/ipc/display_compositor_memory_and_task_controller_on_gpu.h
+similarity index 90%
+rename from gpu/command_buffer/service/display_compositor_memory_and_task_controller_on_gpu.h
+rename to gpu/ipc/display_compositor_memory_and_task_controller_on_gpu.h
+index b9b1dd7ca6f1d..c8e6c5545587a 100644
+--- gpu/command_buffer/service/display_compositor_memory_and_task_controller_on_gpu.h
++++ gpu/ipc/display_compositor_memory_and_task_controller_on_gpu.h
+@@ -2,8 +2,8 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
+-#ifndef GPU_COMMAND_BUFFER_SERVICE_DISPLAY_COMPOSITOR_MEMORY_AND_TASK_CONTROLLER_ON_GPU_H_
+-#define GPU_COMMAND_BUFFER_SERVICE_DISPLAY_COMPOSITOR_MEMORY_AND_TASK_CONTROLLER_ON_GPU_H_
++#ifndef GPU_IPC_DISPLAY_COMPOSITOR_MEMORY_AND_TASK_CONTROLLER_ON_GPU_H_
++#define GPU_IPC_DISPLAY_COMPOSITOR_MEMORY_AND_TASK_CONTROLLER_ON_GPU_H_
+ 
+ #include "base/memory/raw_ptr.h"
+ #include "base/sequence_checker.h"
+@@ -12,8 +12,8 @@
+ #include "gpu/command_buffer/service/sequence_id.h"
+ #include "gpu/command_buffer/service/shared_context_state.h"
+ #include "gpu/config/gpu_driver_bug_workarounds.h"
+-#include "gpu/gpu_gles2_export.h"
+ #include "gpu/ipc/common/command_buffer_id.h"
++#include "gpu/ipc/gl_in_process_context_export.h"
+ 
+ namespace gpu {
+ class CommandBufferTaskExecutor;
+@@ -27,7 +27,8 @@ struct GpuPreferences;
+ // This class holds ownership of data structure that is only used on the gpu
+ // thread. This class is expected to be 1:1 relationship with the display
+ // compositor.
+-class GPU_GLES2_EXPORT DisplayCompositorMemoryAndTaskControllerOnGpu {
++class GL_IN_PROCESS_CONTEXT_EXPORT
++    DisplayCompositorMemoryAndTaskControllerOnGpu {
+  public:
+   // Used for SkiaRenderer.
+   DisplayCompositorMemoryAndTaskControllerOnGpu(
+@@ -94,4 +95,4 @@ class GPU_GLES2_EXPORT DisplayCompositorMemoryAndTaskControllerOnGpu {
+ 
+ }  // namespace gpu
+ 
+-#endif  // GPU_COMMAND_BUFFER_SERVICE_DISPLAY_COMPOSITOR_MEMORY_AND_TASK_CONTROLLER_ON_GPU_H_
++#endif  // GPU_IPC_DISPLAY_COMPOSITOR_MEMORY_AND_TASK_CONTROLLER_ON_GPU_H_
+diff --git gpu/ipc/gl_in_process_context.cc gpu/ipc/gl_in_process_context.cc
+index 8e510254a013f..c725259e534a9 100644
+--- gpu/ipc/gl_in_process_context.cc
++++ gpu/ipc/gl_in_process_context.cc
+@@ -22,8 +22,8 @@
+ #include "gpu/command_buffer/client/transfer_buffer.h"
+ #include "gpu/command_buffer/common/command_buffer.h"
+ #include "gpu/command_buffer/common/constants.h"
+-#include "gpu/command_buffer/service/gpu_task_scheduler_helper.h"
+ #include "gpu/config/gpu_feature_info.h"
++#include "gpu/ipc/gpu_task_scheduler_helper.h"
+ #include "gpu/skia_bindings/gles2_implementation_with_grcontext_support.h"
+ #include "ui/gfx/geometry/size.h"
+ 
+diff --git gpu/ipc/gl_in_process_context.h gpu/ipc/gl_in_process_context.h
+index 199dafa544dae..3572a2fbb5644 100644
+--- gpu/ipc/gl_in_process_context.h
++++ gpu/ipc/gl_in_process_context.h
+@@ -9,7 +9,7 @@
+ 
+ #include "base/task/single_thread_task_runner.h"
+ #include "gpu/command_buffer/common/context_creation_attribs.h"
+-#include "gpu/command_buffer/service/command_buffer_task_executor.h"
++#include "gpu/ipc/command_buffer_task_executor.h"
+ #include "gpu/ipc/gl_in_process_context_export.h"
+ #include "gpu/ipc/in_process_command_buffer.h"
+ #include "ui/gfx/native_widget_types.h"
+diff --git gpu/ipc/gpu_in_process_thread_service.cc gpu/ipc/gpu_in_process_thread_service.cc
+index 42e0414d278b9..5ad5bde599ead 100644
+--- gpu/ipc/gpu_in_process_thread_service.cc
++++ gpu/ipc/gpu_in_process_thread_service.cc
+@@ -10,7 +10,7 @@
+ #include "base/notreached.h"
+ #include "base/threading/thread_task_runner_handle.h"
+ #include "gpu/command_buffer/service/scheduler.h"
+-#include "gpu/command_buffer/service/scheduler_sequence.h"
++#include "gpu/ipc/scheduler_sequence.h"
+ 
+ namespace gpu {
+ 
+diff --git gpu/ipc/gpu_in_process_thread_service.h gpu/ipc/gpu_in_process_thread_service.h
+index 2284cfa3d635e..006ff51c8307e 100644
+--- gpu/ipc/gpu_in_process_thread_service.h
++++ gpu/ipc/gpu_in_process_thread_service.h
+@@ -11,11 +11,11 @@
+ #include "base/compiler_specific.h"
+ #include "base/memory/raw_ptr.h"
+ #include "base/task/single_thread_task_runner.h"
+-#include "gpu/command_buffer/service/command_buffer_task_executor.h"
+ #include "gpu/command_buffer/service/mailbox_manager.h"
+-#include "gpu/command_buffer/service/single_task_sequence.h"
++#include "gpu/ipc/command_buffer_task_executor.h"
+ #include "gpu/ipc/gl_in_process_context_export.h"
+ #include "gpu/ipc/in_process_command_buffer.h"
++#include "gpu/ipc/single_task_sequence.h"
+ #include "ui/gl/gl_share_group.h"
+ 
+ namespace gpu {
+diff --git gpu/command_buffer/service/gpu_task_scheduler_helper.cc gpu/ipc/gpu_task_scheduler_helper.cc
+similarity index 90%
+rename from gpu/command_buffer/service/gpu_task_scheduler_helper.cc
+rename to gpu/ipc/gpu_task_scheduler_helper.cc
+index 1130cfd953c71..e4540dbc7fb30 100644
+--- gpu/command_buffer/service/gpu_task_scheduler_helper.cc
++++ gpu/ipc/gpu_task_scheduler_helper.cc
+@@ -2,12 +2,12 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
+-#include "gpu/command_buffer/service/gpu_task_scheduler_helper.h"
++#include "gpu/ipc/gpu_task_scheduler_helper.h"
+ 
+ #include "gpu/command_buffer/client/cmd_buffer_helper.h"
+-#include "gpu/command_buffer/service/command_buffer_task_executor.h"
+-#include "gpu/command_buffer/service/scheduler_sequence.h"
+-#include "gpu/command_buffer/service/single_task_sequence.h"
++#include "gpu/ipc/command_buffer_task_executor.h"
++#include "gpu/ipc/scheduler_sequence.h"
++#include "gpu/ipc/single_task_sequence.h"
+ 
+ namespace gpu {
+ 
+diff --git gpu/command_buffer/service/gpu_task_scheduler_helper.h gpu/ipc/gpu_task_scheduler_helper.h
+similarity index 93%
+rename from gpu/command_buffer/service/gpu_task_scheduler_helper.h
+rename to gpu/ipc/gpu_task_scheduler_helper.h
+index ecec9c49e3bd4..da4ffce50a0df 100644
+--- gpu/command_buffer/service/gpu_task_scheduler_helper.h
++++ gpu/ipc/gpu_task_scheduler_helper.h
+@@ -2,8 +2,8 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
+-#ifndef GPU_COMMAND_BUFFER_SERVICE_GPU_TASK_SCHEDULER_HELPER_H_
+-#define GPU_COMMAND_BUFFER_SERVICE_GPU_TASK_SCHEDULER_HELPER_H_
++#ifndef GPU_IPC_GPU_TASK_SCHEDULER_HELPER_H_
++#define GPU_IPC_GPU_TASK_SCHEDULER_HELPER_H_
+ 
+ #include <vector>
+ 
+@@ -11,7 +11,7 @@
+ #include "base/memory/raw_ptr.h"
+ #include "gpu/command_buffer/common/sync_token.h"
+ #include "gpu/command_buffer/service/sequence_id.h"
+-#include "gpu/gpu_gles2_export.h"
++#include "gpu/ipc/gl_in_process_context_export.h"
+ 
+ namespace base {
+ class TimeTicks;
+@@ -38,7 +38,7 @@ class InProcessCommandBuffer;
+ // This class is per display compositor. When this is used with SkiaRenderer, it
+ // is created on SkiaOutputSurfaceImpl. Each user of this class would hold a
+ // reference.
+-class GPU_GLES2_EXPORT GpuTaskSchedulerHelper {
++class GL_IN_PROCESS_CONTEXT_EXPORT GpuTaskSchedulerHelper {
+  public:
+   // This constructor is only used for SkiaOutputSurface.
+   explicit GpuTaskSchedulerHelper(
+@@ -108,4 +108,4 @@ class GPU_GLES2_EXPORT GpuTaskSchedulerHelper {
+ 
+ }  // namespace gpu
+ 
+-#endif  // GPU_COMMAND_BUFFER_SERVICE_GPU_TASK_SCHEDULER_HELPER_H_
++#endif  // GPU_IPC_GPU_TASK_SCHEDULER_HELPER_H_
+diff --git gpu/ipc/in_process_command_buffer.cc gpu/ipc/in_process_command_buffer.cc
+index b314ce8d30103..af8341642407e 100644
+--- gpu/ipc/in_process_command_buffer.cc
++++ gpu/ipc/in_process_command_buffer.cc
+@@ -33,7 +33,6 @@
+ #include "gpu/command_buffer/client/shared_image_interface.h"
+ #include "gpu/command_buffer/common/sync_token.h"
+ #include "gpu/command_buffer/service/command_buffer_service.h"
+-#include "gpu/command_buffer/service/command_buffer_task_executor.h"
+ #include "gpu/command_buffer/service/context_group.h"
+ #include "gpu/command_buffer/service/gl_context_virtual.h"
+ #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
+@@ -50,14 +49,15 @@
+ #include "gpu/command_buffer/service/scheduler.h"
+ #include "gpu/command_buffer/service/service_utils.h"
+ #include "gpu/command_buffer/service/shared_context_state.h"
+-#include "gpu/command_buffer/service/shared_image_interface_in_process.h"
+-#include "gpu/command_buffer/service/single_task_sequence.h"
+ #include "gpu/command_buffer/service/sync_point_manager.h"
+ #include "gpu/command_buffer/service/webgpu_decoder.h"
+ #include "gpu/config/gpu_feature_info.h"
+ #include "gpu/config/gpu_preferences.h"
+ #include "gpu/config/gpu_switches.h"
++#include "gpu/ipc/command_buffer_task_executor.h"
+ #include "gpu/ipc/common/gpu_client_ids.h"
++#include "gpu/ipc/shared_image_interface_in_process.h"
++#include "gpu/ipc/single_task_sequence.h"
+ #include "ui/gfx/geometry/size.h"
+ #include "ui/gfx/gpu_fence.h"
+ #include "ui/gfx/gpu_fence_handle.h"
+@@ -97,13 +97,18 @@ class ScopedEvent {
+ 
+ }  // namespace
+ 
+-void InProcessCommandBuffer::SetError() {
++InProcessCommandBuffer::SharedImageInterfaceHelper::SharedImageInterfaceHelper(
++    InProcessCommandBuffer* command_buffer)
++    : command_buffer_(command_buffer) {}
++
++void InProcessCommandBuffer::SharedImageInterfaceHelper::SetError() {
+   // Signal errors by losing the command buffer.
+-  command_buffer_->SetParseError(error::kLostContext);
++  command_buffer_->command_buffer_->SetParseError(error::kLostContext);
+ }
+ 
+-void InProcessCommandBuffer::WrapTaskWithGpuCheck(base::OnceClosure task) {
+-  RunTaskOnGpuThread(std::move(task));
++void InProcessCommandBuffer::SharedImageInterfaceHelper::WrapTaskWithGpuCheck(
++    base::OnceClosure task) {
++  command_buffer_->RunTaskOnGpuThread(std::move(task));
+ }
+ 
+ InProcessCommandBuffer::InProcessCommandBuffer(
+@@ -217,7 +222,8 @@ gpu::ContextResult InProcessCommandBuffer::Initialize(
+   if (result == gpu::ContextResult::kSuccess) {
+     capabilities_ = capabilities;
+     shared_image_interface_ = std::make_unique<SharedImageInterfaceInProcess>(
+-        task_sequence_, gpu_dependency_.get(), this);
++        task_sequence_, gpu_dependency_.get(),
++        std::make_unique<SharedImageInterfaceHelper>(this));
+   }
+ 
+   return result;
+diff --git gpu/ipc/in_process_command_buffer.h gpu/ipc/in_process_command_buffer.h
+index 98b0f509093c9..9b9876830fc40 100644
+--- gpu/ipc/in_process_command_buffer.h
++++ gpu/ipc/in_process_command_buffer.h
+@@ -28,21 +28,20 @@
+ #include "gpu/command_buffer/common/command_buffer.h"
+ #include "gpu/command_buffer/common/context_result.h"
+ #include "gpu/command_buffer/service/command_buffer_service.h"
+-#include "gpu/command_buffer/service/command_buffer_task_executor.h"
+ #include "gpu/command_buffer/service/context_group.h"
+ #include "gpu/command_buffer/service/decoder_client.h"
+ #include "gpu/command_buffer/service/decoder_context.h"
+-#include "gpu/command_buffer/service/display_compositor_memory_and_task_controller_on_gpu.h"
+-#include "gpu/command_buffer/service/gpu_task_scheduler_helper.h"
+ #include "gpu/command_buffer/service/gr_cache_controller.h"
+ #include "gpu/command_buffer/service/program_cache.h"
+ #include "gpu/command_buffer/service/service_discardable_manager.h"
+ #include "gpu/command_buffer/service/service_transfer_cache.h"
+-#include "gpu/command_buffer/service/shared_image_interface_in_process.h"
+ #include "gpu/config/gpu_feature_info.h"
+ #include "gpu/config/gpu_preferences.h"
++#include "gpu/ipc/command_buffer_task_executor.h"
+ #include "gpu/ipc/common/surface_handle.h"
++#include "gpu/ipc/display_compositor_memory_and_task_controller_on_gpu.h"
+ #include "gpu/ipc/gl_in_process_context_export.h"
++#include "gpu/ipc/gpu_task_scheduler_helper.h"
+ #include "gpu/ipc/service/context_url.h"
+ #include "third_party/abseil-cpp/absl/types/optional.h"
+ #include "ui/gfx/gpu_memory_buffer.h"
+@@ -68,6 +67,7 @@ class SharedContextState;
+ class GpuProcessActivityFlags;
+ class ImageFactory;
+ class SharedImageInterface;
++class SharedImageInterfaceInProcess;
+ class SyncPointClientState;
+ struct ContextCreationAttribs;
+ 
+@@ -177,9 +177,19 @@ class GL_IN_PROCESS_CONTEXT_EXPORT InProcessCommandBuffer
+ 
+   gpu::SharedImageInterface* GetSharedImageInterface() const;
+ 
+-  // SharedImageInterfaceInProcess::CommandBufferHelper implementation:
+-  void SetError() override;
+-  void WrapTaskWithGpuCheck(base::OnceClosure task) override;
++  // This is wrapper for VizSharedImageInterface implementation that is only
++  // used in InProcessCommandBuffer.
++  class SharedImageInterfaceHelper {
++   public:
++    explicit SharedImageInterfaceHelper(InProcessCommandBuffer* command_buffer);
++    ~SharedImageInterfaceHelper() = default;
++
++    void SetError();
++    void WrapTaskWithGpuCheck(base::OnceClosure task);
++
++   private:
++    raw_ptr<InProcessCommandBuffer> command_buffer_;
++  };
+ 
+  private:
+   struct InitializeOnGpuThreadParams {
+diff --git gpu/ipc/raster_in_process_context.h gpu/ipc/raster_in_process_context.h
+index 6a70aadaba538..508a8e682f26e 100644
+--- gpu/ipc/raster_in_process_context.h
++++ gpu/ipc/raster_in_process_context.h
+@@ -10,7 +10,7 @@
+ #include "base/memory/scoped_refptr.h"
+ #include "base/task/single_thread_task_runner.h"
+ #include "gpu/command_buffer/client/raster_implementation.h"
+-#include "gpu/command_buffer/service/command_buffer_task_executor.h"
++#include "gpu/ipc/command_buffer_task_executor.h"
+ #include "gpu/ipc/in_process_command_buffer.h"
+ 
+ namespace gpu {
+diff --git gpu/command_buffer/service/scheduler_sequence.cc gpu/ipc/scheduler_sequence.cc
+similarity index 98%
+rename from gpu/command_buffer/service/scheduler_sequence.cc
+rename to gpu/ipc/scheduler_sequence.cc
+index 54c99903f516b..0c56183538a2f 100644
+--- gpu/command_buffer/service/scheduler_sequence.cc
++++ gpu/ipc/scheduler_sequence.cc
+@@ -2,7 +2,7 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
+-#include "gpu/command_buffer/service/scheduler_sequence.h"
++#include "gpu/ipc/scheduler_sequence.h"
+ 
+ #include "base/no_destructor.h"
+ #include "base/threading/thread_local.h"
+diff --git gpu/command_buffer/service/scheduler_sequence.h gpu/ipc/scheduler_sequence.h
+similarity index 90%
+rename from gpu/command_buffer/service/scheduler_sequence.h
+rename to gpu/ipc/scheduler_sequence.h
+index ba2b5548547e6..53653f6e722b1 100644
+--- gpu/command_buffer/service/scheduler_sequence.h
++++ gpu/ipc/scheduler_sequence.h
+@@ -2,8 +2,8 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
+-#ifndef GPU_COMMAND_BUFFER_SERVICE_SCHEDULER_SEQUENCE_H_
+-#define GPU_COMMAND_BUFFER_SERVICE_SCHEDULER_SEQUENCE_H_
++#ifndef GPU_IPC_SCHEDULER_SEQUENCE_H_
++#define GPU_IPC_SCHEDULER_SEQUENCE_H_
+ 
+ #include <memory>
+ #include <vector>
+@@ -14,8 +14,8 @@
+ #include "base/task/single_thread_task_runner.h"
+ #include "gpu/command_buffer/common/sync_token.h"
+ #include "gpu/command_buffer/service/sequence_id.h"
+-#include "gpu/command_buffer/service/single_task_sequence.h"
+-#include "gpu/gpu_gles2_export.h"
++#include "gpu/ipc/gl_in_process_context_export.h"
++#include "gpu/ipc/single_task_sequence.h"
+ 
+ namespace viz {
+ class Display;
+@@ -30,7 +30,7 @@ class Scheduler;
+ 
+ // Selectively allow ScheduleTask if DefaultDisallowScheduleTaskOnCurrentThread
+ // is used for a thread.
+-class GPU_GLES2_EXPORT ScopedAllowScheduleGpuTask {
++class GL_IN_PROCESS_CONTEXT_EXPORT ScopedAllowScheduleGpuTask {
+  public:
+   ScopedAllowScheduleGpuTask(const ScopedAllowScheduleGpuTask&) = delete;
+   ScopedAllowScheduleGpuTask& operator=(const ScopedAllowScheduleGpuTask&) =
+@@ -58,7 +58,8 @@ class GPU_GLES2_EXPORT ScopedAllowScheduleGpuTask {
+ };
+ 
+ // SingleTaskSequence implementation that uses gpu scheduler sequences.
+-class GPU_GLES2_EXPORT SchedulerSequence : public SingleTaskSequence {
++class GL_IN_PROCESS_CONTEXT_EXPORT SchedulerSequence
++    : public SingleTaskSequence {
+  public:
+   // Enable DCHECKs for Android WebView restrictions for ScheduleTask for
+   // current thread. Then use ScopedAllowScheduleGpuTask to selectively
+@@ -108,4 +109,4 @@ class GPU_GLES2_EXPORT SchedulerSequence : public SingleTaskSequence {
+ 
+ }  // namespace gpu
+ 
+-#endif  // GPU_COMMAND_BUFFER_SERVICE_SCHEDULER_SEQUENCE_H_
++#endif  // GPU_IPC_SCHEDULER_SEQUENCE_H_
+diff --git gpu/command_buffer/service/shared_image_interface_in_process.cc gpu/ipc/shared_image_interface_in_process.cc
+similarity index 96%
+rename from gpu/command_buffer/service/shared_image_interface_in_process.cc
+rename to gpu/ipc/shared_image_interface_in_process.cc
+index e6751b4b3e820..08ce7402654a2 100644
+--- gpu/command_buffer/service/shared_image_interface_in_process.cc
++++ gpu/ipc/shared_image_interface_in_process.cc
+@@ -2,7 +2,7 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
+-#include "gpu/command_buffer/service/shared_image_interface_in_process.h"
++#include "gpu/ipc/shared_image_interface_in_process.h"
+ 
+ #include "base/bind.h"
+ #include "base/memory/raw_ptr.h"
+@@ -11,17 +11,12 @@
+ #include "gpu/command_buffer/client/gpu_memory_buffer_manager.h"
+ #include "gpu/command_buffer/common/shared_image_usage.h"
+ #include "gpu/command_buffer/common/sync_token.h"
+-#include "gpu/command_buffer/service/command_buffer_task_executor.h"
+-#include "gpu/command_buffer/service/display_compositor_memory_and_task_controller_on_gpu.h"
+-#include "gpu/command_buffer/service/gpu_command_buffer_memory_tracker.h"
+-#include "gpu/command_buffer/service/image_factory.h"
++#include "gpu/command_buffer/service/mailbox_manager.h"
+ #include "gpu/command_buffer/service/shared_image/shared_image_factory.h"
+-#include "gpu/command_buffer/service/single_task_sequence.h"
+ #include "gpu/command_buffer/service/sync_point_manager.h"
+-#include "gpu/config/gpu_driver_bug_workarounds.h"
+-#include "gpu/config/gpu_feature_info.h"
+-#include "gpu/config/gpu_preferences.h"
++#include "gpu/ipc/command_buffer_task_executor.h"
+ #include "gpu/ipc/common/gpu_client_ids.h"
++#include "gpu/ipc/single_task_sequence.h"
+ #include "ui/gl/gl_context.h"
+ 
+ namespace gpu {
+@@ -62,7 +57,7 @@ struct SharedImageInterfaceInProcess::SetUpOnGpuParams {
+ SharedImageInterfaceInProcess::SharedImageInterfaceInProcess(
+     SingleTaskSequence* task_sequence,
+     DisplayCompositorMemoryAndTaskControllerOnGpu* display_controller,
+-    raw_ptr<CommandBufferHelper> command_buffer_helper)
++    std::unique_ptr<CommandBufferHelper> command_buffer_helper)
+     : SharedImageInterfaceInProcess(
+           task_sequence,
+           display_controller->sync_point_manager(),
+@@ -74,7 +69,7 @@ SharedImageInterfaceInProcess::SharedImageInterfaceInProcess(
+           display_controller->image_factory(),
+           display_controller->memory_tracker(),
+           /*is_for_display_compositor=*/true,
+-          command_buffer_helper) {}
++          std::move(command_buffer_helper)) {}
+ 
+ SharedImageInterfaceInProcess::SharedImageInterfaceInProcess(
+     SingleTaskSequence* task_sequence,
+@@ -87,11 +82,11 @@ SharedImageInterfaceInProcess::SharedImageInterfaceInProcess(
+     ImageFactory* image_factory,
+     MemoryTracker* memory_tracker,
+     bool is_for_display_compositor,
+-    raw_ptr<CommandBufferHelper> command_buffer_helper)
++    std::unique_ptr<CommandBufferHelper> command_buffer_helper)
+     : task_sequence_(task_sequence),
+       command_buffer_id_(
+           DisplayCompositorMemoryAndTaskControllerOnGpu::NextCommandBufferId()),
+-      command_buffer_helper_(command_buffer_helper),
++      command_buffer_helper_(std::move(command_buffer_helper)),
+       shared_image_manager_(shared_image_manager),
+       sync_point_manager_(sync_point_manager) {
+   DETACH_FROM_SEQUENCE(gpu_sequence_checker_);
+diff --git gpu/command_buffer/service/shared_image_interface_in_process.h gpu/ipc/shared_image_interface_in_process.h
+similarity index 93%
+rename from gpu/command_buffer/service/shared_image_interface_in_process.h
+rename to gpu/ipc/shared_image_interface_in_process.h
+index 5404ec1d8e293..7a165d38b105c 100644
+--- gpu/command_buffer/service/shared_image_interface_in_process.h
++++ gpu/ipc/shared_image_interface_in_process.h
+@@ -2,16 +2,14 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
+-#ifndef GPU_COMMAND_BUFFER_SERVICE_SHARED_IMAGE_INTERFACE_IN_PROCESS_H_
+-#define GPU_COMMAND_BUFFER_SERVICE_SHARED_IMAGE_INTERFACE_IN_PROCESS_H_
++#ifndef GPU_IPC_SHARED_IMAGE_INTERFACE_IN_PROCESS_H_
++#define GPU_IPC_SHARED_IMAGE_INTERFACE_IN_PROCESS_H_
+ 
+-#include "base/callback.h"
+ #include "base/memory/raw_ptr.h"
+ #include "build/build_config.h"
+ #include "gpu/command_buffer/client/shared_image_interface.h"
+ #include "gpu/command_buffer/common/command_buffer_id.h"
+-#include "gpu/gpu_gles2_export.h"
+-#include "ui/gfx/gpu_memory_buffer.h"
++#include "gpu/ipc/in_process_command_buffer.h"
+ 
+ namespace base {
+ class WaitableEvent;
+@@ -37,16 +35,11 @@ struct SyncToken;
+ // happening on gpu thread.
+ // TODO(weiliangc): Currently this is implemented as backed by
+ // InProcessCommandBuffer. Add constructor for using with SkiaRenderer.
+-class GPU_GLES2_EXPORT SharedImageInterfaceInProcess
++class GL_IN_PROCESS_CONTEXT_EXPORT SharedImageInterfaceInProcess
+     : public SharedImageInterface {
+  public:
+-  // This is only implemented by InProcessCommandBuffer.
+-  class GPU_GLES2_EXPORT CommandBufferHelper {
+-   public:
+-    virtual void SetError() = 0;
+-    virtual void WrapTaskWithGpuCheck(base::OnceClosure task) = 0;
+-  };
+-
++  using CommandBufferHelper =
++      InProcessCommandBuffer::SharedImageInterfaceHelper;
+   // The callers must guarantee that the instances passed via pointers are kept
+   // alive for as long as the instance of this class is alive. This can be
+   // achieved by ensuring that the ownership of the created
+@@ -55,8 +48,8 @@ class GPU_GLES2_EXPORT SharedImageInterfaceInProcess
+   SharedImageInterfaceInProcess(
+       SingleTaskSequence* task_sequence,
+       DisplayCompositorMemoryAndTaskControllerOnGpu* display_controller,
+-      raw_ptr<CommandBufferHelper> command_buffer_helper);
+-  // The callers must guarantee that the instances passed via pointers are kept
++      std::unique_ptr<CommandBufferHelper> command_buffer_helper);
++ // The callers must guarantee that the instances passed via pointers are kept
+   // alive for as long as the instance of this class is alive. This can be
+   // achieved by ensuring that the ownership of the created
+   // SharedImageInterfaceInProcess is the same as the ownership of the passed in
+@@ -68,11 +61,12 @@ class GPU_GLES2_EXPORT SharedImageInterfaceInProcess
+       const GpuDriverBugWorkarounds& gpu_workarounds,
+       const GpuFeatureInfo& gpu_feature_info,
+       gpu::SharedContextState* context_state,
++      MailboxManager* mailbox_manager,
+       SharedImageManager* shared_image_manager,
+       ImageFactory* image_factory,
+       MemoryTracker* tracker,
+       bool is_for_display_compositor = false,
+-      raw_ptr<CommandBufferHelper> command_buffer_helper = nullptr);
++      std::unique_ptr<CommandBufferHelper> command_buffer_helper = nullptr);
+ 
+   SharedImageInterfaceInProcess(const SharedImageInterfaceInProcess&) = delete;
+   SharedImageInterfaceInProcess& operator=(
+@@ -244,7 +238,7 @@ class GPU_GLES2_EXPORT SharedImageInterfaceInProcess
+   // SharedImageInterfaceInProcess.
+   raw_ptr<SingleTaskSequence> task_sequence_;
+   const CommandBufferId command_buffer_id_;
+-  raw_ptr<CommandBufferHelper> command_buffer_helper_;
++  std::unique_ptr<CommandBufferHelper> command_buffer_helper_;
+ 
+   base::OnceCallback<std::unique_ptr<SharedImageFactory>()> create_factory_;
+ 
+@@ -272,4 +266,4 @@ class GPU_GLES2_EXPORT SharedImageInterfaceInProcess
+ 
+ }  // namespace gpu
+ 
+-#endif  // GPU_COMMAND_BUFFER_SERVICE_SHARED_IMAGE_INTERFACE_IN_PROCESS_H_
++#endif  // GPU_IPC_SHARED_IMAGE_INTERFACE_IN_PROCESS_H_
+diff --git gpu/command_buffer/service/single_task_sequence.h gpu/ipc/single_task_sequence.h
+similarity index 90%
+rename from gpu/command_buffer/service/single_task_sequence.h
+rename to gpu/ipc/single_task_sequence.h
+index 8004ba2bc6396..ed80681e23ccd 100644
+--- gpu/command_buffer/service/single_task_sequence.h
++++ gpu/ipc/single_task_sequence.h
+@@ -2,8 +2,8 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
+-#ifndef GPU_COMMAND_BUFFER_SERVICE_SINGLE_TASK_SEQUENCE_H_
+-#define GPU_COMMAND_BUFFER_SERVICE_SINGLE_TASK_SEQUENCE_H_
++#ifndef GPU_IPC_SINGLE_TASK_SEQUENCE_H_
++#define GPU_IPC_SINGLE_TASK_SEQUENCE_H_
+ 
+ #include <memory>
+ #include <vector>
+@@ -11,7 +11,7 @@
+ #include "base/callback.h"
+ #include "gpu/command_buffer/common/sync_token.h"
+ #include "gpu/command_buffer/service/sequence_id.h"
+-#include "gpu/gpu_gles2_export.h"
++#include "gpu/ipc/gl_in_process_context_export.h"
+ 
+ namespace base {
+ class TimeTicks;
+@@ -22,7 +22,7 @@ namespace gpu {
+ // run in order. Tasks across sequences should be synchronized using sync
+ // tokens. Destroying the sequence will drop tasks which haven't been executed
+ // yet.
+-class GPU_GLES2_EXPORT SingleTaskSequence {
++class GL_IN_PROCESS_CONTEXT_EXPORT SingleTaskSequence {
+  public:
+   virtual ~SingleTaskSequence() {}
+ 
+@@ -66,4 +66,4 @@ class GPU_GLES2_EXPORT SingleTaskSequence {
+ };
+ }  // namespace gpu
+ 
+-#endif  // GPU_COMMAND_BUFFER_SERVICE_SINGLE_TASK_SEQUENCE_H_
++#endif  // GPU_IPC_SINGLE_TASK_SEQUENCE_H_
+diff --git gpu/ipc/webgpu_in_process_context.h gpu/ipc/webgpu_in_process_context.h
+index 99f77672b63e7..49f5666c8f63c 100644
+--- gpu/ipc/webgpu_in_process_context.h
++++ gpu/ipc/webgpu_in_process_context.h
+@@ -9,7 +9,7 @@
+ 
+ #include "base/memory/scoped_refptr.h"
+ #include "base/task/single_thread_task_runner.h"
+-#include "gpu/command_buffer/service/command_buffer_task_executor.h"
++#include "gpu/ipc/command_buffer_task_executor.h"
+ #include "gpu/ipc/in_process_command_buffer.h"
+ 
+ namespace base {
+-- 
+2.36.1.windows.1
+
