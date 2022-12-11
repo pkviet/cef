@@ -1,0 +1,461 @@
+From 67087c03a18725803343b272f3a90a084feb7c76 Mon Sep 17 00:00:00 2001
+From: pkv <pkv@obsproject.com>
+Date: Sun, 4 Dec 2022 08:32:58 +0100
+Subject: [PATCH] Revert "Last cleanup pass for GLRenderer/SkiaRenderer"
+
+This reverts commit 7fbb9e9abdb050fc76731b14e528125d46c65220.
+---
+ .../memory_infra_background_allowlist.cc      |  4 +-
+ cc/paint/paint_filter.h                       |  2 +
+ chrome/browser/flag-metadata.json             |  5 ++
+ .../metrics/process_memory_metrics_emitter.cc |  2 +
+ components/viz/common/skia_helper.cc          | 52 ++++++++++++++++++-
+ components/viz/common/skia_helper.h           | 12 +++++
+ ...y_compositor_memory_and_task_controller.cc |  3 ++
+ ...ay_compositor_memory_and_task_controller.h |  2 +-
+ .../display/overlay_processor_interface.h     | 11 ++--
+ .../viz/service/display/renderer_pixeltest.cc |  3 +-
+ .../display/skia_readback_pixeltest.cc        | 12 +++--
+ .../output_surface_provider_impl.cc           | 14 ++---
+ components/viz/test/gl_scaler_test_util.h     |  3 +-
+ docs/gpu/sync_token_internals.md              |  2 +-
+ docs/life_of_a_frame.md                       |  6 +--
+ gpu/command_buffer/client/gl_helper.h         |  4 +-
+ gpu/ipc/gpu_task_scheduler_helper.h           |  9 ++--
+ ui/gfx/swap_result.h                          | 10 ++--
+ 18 files changed, 124 insertions(+), 32 deletions(-)
+
+diff --git base/trace_event/memory_infra_background_allowlist.cc base/trace_event/memory_infra_background_allowlist.cc
+index 3dc4747f44270..f09e21bbea604 100644
+--- base/trace_event/memory_infra_background_allowlist.cc
++++ base/trace_event/memory_infra_background_allowlist.cc
+@@ -78,7 +78,9 @@ constexpr auto kDumpProviderAllowlist =
+         "WebMediaPlayer_MainThread",
+         "WebMediaPlayer_MediaThread",
+         "TabRestoreServiceHelper",
+-      // clang-format on
++        "VizProcessContextProvider",
++        nullptr  // End of list marker.
++        // clang-format on
+     });
+ 
+ // A list of string names that are allowed for the memory allocator dumps in
+diff --git cc/paint/paint_filter.h cc/paint/paint_filter.h
+index 3f7936f01a7b9..78e28b954155f 100644
+--- cc/paint/paint_filter.h
++++ cc/paint/paint_filter.h
+@@ -20,6 +20,7 @@
+ #include "third_party/skia/include/effects/SkImageFilters.h"
+ 
+ namespace viz {
++class GLRenderer;
+ class SkiaRenderer;
+ class SoftwareRenderer;
+ }  // namespace viz
+@@ -145,6 +146,7 @@ class CC_PAINT_EXPORT PaintFilter : public SkRefCnt {
+   // For cached skia filter access in SkPaint conversions. Mostly used during
+   // raster.
+   friend class PaintFlags;
++  friend class viz::GLRenderer;
+   friend class viz::SkiaRenderer;
+   friend class viz::SoftwareRenderer;
+ 
+diff --git chrome/browser/flag-metadata.json chrome/browser/flag-metadata.json
+index 2a6cebcb60db7..4fe2789f10606 100644
+--- chrome/browser/flag-metadata.json
++++ chrome/browser/flag-metadata.json
+@@ -3012,6 +3012,11 @@
+     // Isolation.
+     "expiry_milestone": -1
+   },
++  {
++    "name": "enable-skia-renderer",
++    "owners": [ "backer", "kylechar", "penghuang" ],
++    "expiry_milestone": 100
++  },
+   {
+     "name": "enable-start-surface",
+     "owners": [ "hanxi", "wychen" ],
+diff --git chrome/browser/metrics/process_memory_metrics_emitter.cc chrome/browser/metrics/process_memory_metrics_emitter.cc
+index 76399e1b4efa1..b4bc1623c417b 100644
+--- chrome/browser/metrics/process_memory_metrics_emitter.cc
++++ chrome/browser/metrics/process_memory_metrics_emitter.cc
+@@ -407,6 +407,8 @@ const Metric kAllocatorDumpNamesForMetrics[] = {
+      EmitTo::kSizeInUkmAndUma, &Memory_Experimental::SetSkia},
+     {"skia/gpu_resources", "SharedContextState", MetricSize::kLarge,
+      kEffectiveSize, EmitTo::kIgnored, nullptr},
++    {"skia/gpu_resources", "VizProcessContextProvider", MetricSize::kLarge,
++     kEffectiveSize, EmitTo::kIgnored, nullptr},
+     {"skia/sk_glyph_cache", "Skia.SkGlyphCache", MetricSize::kLarge,
+      kEffectiveSize, EmitTo::kSizeInUkmAndUma,
+      &Memory_Experimental::SetSkia_SkGlyphCache},
+diff --git components/viz/common/skia_helper.cc components/viz/common/skia_helper.cc
+index 18ac6a2e8f3da..ee40fe04787ba 100644
+--- components/viz/common/skia_helper.cc
++++ components/viz/common/skia_helper.cc
+@@ -2,12 +2,62 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ #include "components/viz/common/skia_helper.h"
+-
++#include "base/trace_event/trace_event.h"
++#include "cc/base/math_util.h"
+ #include "third_party/skia/include/effects/SkColorMatrix.h"
+ #include "third_party/skia/include/effects/SkImageFilters.h"
+ #include "third_party/skia/include/effects/SkOverdrawColorFilter.h"
++#include "third_party/skia/include/gpu/GrBackendSurface.h"
++#include "third_party/skia/include/gpu/GrRecordingContext.h"
++#include "ui/gfx/geometry/skia_conversions.h"
+ 
+ namespace viz {
++sk_sp<SkImage> SkiaHelper::ApplyImageFilter(GrRecordingContext* context,
++                                            sk_sp<SkImage> src_image,
++                                            const gfx::RectF& src_rect,
++                                            const gfx::RectF& dst_rect,
++                                            const gfx::Vector2dF& scale,
++                                            sk_sp<SkImageFilter> filter,
++                                            SkIPoint* offset,
++                                            SkIRect* subset,
++                                            const gfx::PointF& origin,
++                                            bool flush) {
++  if (!filter)
++    return nullptr;
++
++  if (!src_image) {
++    TRACE_EVENT_INSTANT0("viz",
++                         "ApplyImageFilter wrap background texture failed",
++                         TRACE_EVENT_SCOPE_THREAD);
++    return nullptr;
++  }
++
++  // Big filters can sometimes fallback to CPU. Therefore, we need
++  // to disable subnormal floats for performance and security reasons.
++  cc::ScopedSubnormalFloatDisabler disabler;
++  SkMatrix local_matrix;
++  local_matrix.setTranslate(origin.x(), origin.y());
++  local_matrix.postScale(scale.x(), scale.y());
++  local_matrix.postTranslate(-src_rect.x(), -src_rect.y());
++
++  SkIRect clip_bounds = gfx::RectFToSkRect(dst_rect).roundOut();
++  clip_bounds.offset(-src_rect.x(), -src_rect.y());
++
++  filter = filter->makeWithLocalMatrix(local_matrix);
++  SkIRect in_subset = SkIRect::MakeWH(src_rect.width(), src_rect.height());
++
++  sk_sp<SkImage> image = src_image->makeWithFilter(
++      context, filter.get(), in_subset, clip_bounds, subset, offset);
++  if (!image || !image->isTextureBacked()) {
++    return nullptr;
++  }
++
++  // Force a flush of the Skia pipeline before we switch back to the compositor
++  // context.
++  image->getBackendTexture(flush);
++  CHECK(image->isTextureBacked());
++  return image;
++}
+ 
+ sk_sp<SkColorFilter> SkiaHelper::MakeOverdrawColorFilter() {
+   static const SkColor colors[SkOverdrawColorFilter::kNumColors] = {
+diff --git components/viz/common/skia_helper.h components/viz/common/skia_helper.h
+index 34d14e79941d9..7d13251179d6e 100644
+--- components/viz/common/skia_helper.h
++++ components/viz/common/skia_helper.h
+@@ -16,6 +16,18 @@
+ namespace viz {
+ class VIZ_COMMON_EXPORT SkiaHelper {
+  public:
++  // |flush| is necessary for GLRenderer but not SkiaRenderer.
++  static sk_sp<SkImage> ApplyImageFilter(GrRecordingContext* context,
++                                         sk_sp<SkImage> src_image,
++                                         const gfx::RectF& src_rect,
++                                         const gfx::RectF& dst_rect,
++                                         const gfx::Vector2dF& scale,
++                                         sk_sp<SkImageFilter> filter,
++                                         SkIPoint* offset,
++                                         SkIRect* subset,
++                                         const gfx::PointF& origin,
++                                         bool flush);
++
+   static sk_sp<SkColorFilter> MakeOverdrawColorFilter();
+ 
+   static sk_sp<SkImageFilter> BuildOpacityFilter(float opacity);
+diff --git components/viz/service/display/display_compositor_memory_and_task_controller.cc components/viz/service/display/display_compositor_memory_and_task_controller.cc
+index 299391c43a221..09d4d3a8b6bef 100644
+--- components/viz/service/display/display_compositor_memory_and_task_controller.cc
++++ components/viz/service/display/display_compositor_memory_and_task_controller.cc
+@@ -49,6 +49,9 @@ DisplayCompositorMemoryAndTaskController::
+       base::Unretained(this), task_executor, image_factory, &event);
+   gpu_task_scheduler_->GetTaskSequence()->ScheduleTask(std::move(callback), {});
+   event.Wait();
++
++  // TODO(weiliangc): Move VizProcessContextProvider initialization here to take
++  // ownership of the shared image interface.
+ }
+ 
+ DisplayCompositorMemoryAndTaskController::
+diff --git components/viz/service/display/display_compositor_memory_and_task_controller.h components/viz/service/display/display_compositor_memory_and_task_controller.h
+index d559d1a1c1b4b..e182263466803 100644
+--- components/viz/service/display/display_compositor_memory_and_task_controller.h
++++ components/viz/service/display/display_compositor_memory_and_task_controller.h
+@@ -34,7 +34,7 @@ class VIZ_SERVICE_EXPORT DisplayCompositorMemoryAndTaskController {
+   // For SkiaRenderer.
+   explicit DisplayCompositorMemoryAndTaskController(
+       std::unique_ptr<SkiaOutputSurfaceDependency> skia_dependency);
+-  // For InProcessCommandBuffer.
++  // For VizProcessContextProvider that uses InProcessCommandBuffer.
+   DisplayCompositorMemoryAndTaskController(
+       gpu::CommandBufferTaskExecutor* task_executor,
+       gpu::ImageFactory* image_factory);
+diff --git components/viz/service/display/overlay_processor_interface.h components/viz/service/display/overlay_processor_interface.h
+index cb27b7a00bd56..b363c2fc55757 100644
+--- components/viz/service/display/overlay_processor_interface.h
++++ components/viz/service/display/overlay_processor_interface.h
+@@ -173,11 +173,12 @@ class VIZ_SERVICE_EXPORT OverlayProcessorInterface {
+ 
+   // Before the overlay refactor to use OverlayProcessorOnGpu, overlay
+   // candidates are stored inside DirectRenderer. Those overlay candidates are
+-  // later sent over to the GPU thread by SkiaRenderer. This helper function
+-  // will be called by DirectRenderer to take these overlay candidates inside
+-  // overlay processor to avoid sending over DirectRenderer implementation. This
+-  // is overridden by each platform that is ready to send overlay candidates
+-  // inside |OverlayProcessor|. Must be called before ScheduleOverlays().
++  // later sent over to the GPU thread by GLRenderer or SkiaRenderer. This
++  // helper function will be called by DirectRenderer to take these overlay
++  // candidates inside overlay processor to avoid sending over DirectRenderer
++  // implementation. This is overridden by each platform that is ready to send
++  // overlay candidates inside |OverlayProcessor|. Must be called before
++  // ScheduleOverlays().
+   virtual void TakeOverlayCandidates(CandidateList* candidate_list) {}
+ 
+   // TODO(weiliangc): Make it pure virtual after it is implemented by every
+diff --git components/viz/service/display/renderer_pixeltest.cc components/viz/service/display/renderer_pixeltest.cc
+index 1778ee1a6add7..15158b0cf0924 100644
+--- components/viz/service/display/renderer_pixeltest.cc
++++ components/viz/service/display/renderer_pixeltest.cc
+@@ -899,6 +899,7 @@ INSTANTIATE_TEST_SUITE_P(,
+                          testing::ValuesIn(GetRendererTypes()),
+                          testing::PrintToStringParamName());
+ 
++// Test GLRenderer as well as SkiaRenderer.
+ using GPURendererPixelTest = VizPixelTestWithParam;
+ INSTANTIATE_TEST_SUITE_P(,
+                          GPURendererPixelTest,
+@@ -4236,7 +4237,7 @@ TEST_P(GPURendererPixelTest, CheckReadbackSubset) {
+ TEST_P(GPURendererPixelTest, TextureQuadBatching) {
+   // This test verifies that multiple texture quads using the same resource
+   // get drawn correctly.  It implicitly is trying to test that the
+-  // renderer does the right thing with its draw quad cache.
++  // GLRenderer does the right thing with its draw quad cache.
+ 
+   gfx::Rect rect(this->device_viewport_size_);
+   bool needs_blending = false;
+diff --git components/viz/service/display/skia_readback_pixeltest.cc components/viz/service/display/skia_readback_pixeltest.cc
+index 2bc78db0dae78..6444390043606 100644
+--- components/viz/service/display/skia_readback_pixeltest.cc
++++ components/viz/service/display/skia_readback_pixeltest.cc
+@@ -404,7 +404,9 @@ class SkiaReadbackPixelTestRGBA : public SkiaReadbackPixelTest,
+   }
+ };
+ 
+-// Test that SkiaRenderer RGBA readback works correctly.
++// Test that SkiaRenderer readback works correctly. This test will use the
++// default readback implementation for the platform, which is either the legacy
++// GLRendererCopier or the new Skia readback API.
+ TEST_P(SkiaReadbackPixelTestRGBA, ExecutesCopyRequest) {
+   // Generates a RenderPass which contains one quad that spans the full output.
+   // The quad has our source image, so the framebuffer should contain the source
+@@ -469,7 +471,9 @@ class SkiaReadbackPixelTestNV12
+   }
+ };
+ 
+-// Test that SkiaRenderer NV12 readback works correctly.
++// Test that SkiaRenderer readback works correctly. This test will use the
++// default readback implementation for the platform, which is either the legacy
++// GLRendererCopier or the new Skia readback API.
+ TEST_P(SkiaReadbackPixelTestNV12, ExecutesCopyRequest) {
+   // Generates a RenderPass which contains one quad that spans the full output.
+   // The quad has our source image, so the framebuffer should contain the source
+@@ -597,7 +601,9 @@ class SkiaReadbackPixelTestNV12WithBlit
+   bool populates_gpu_memory_buffer() const { return std::get<2>(GetParam()); }
+ };
+ 
+-// Test that SkiaRenderer NV12 readback works correctly using existing textures.
++// Test that SkiaRenderer readback works correctly. This test will use the
++// default readback implementation for the platform, which is either the legacy
++// GLRendererCopier or the new Skia readback API.
+ TEST_P(SkiaReadbackPixelTestNV12WithBlit, ExecutesCopyRequestWithBlit) {
+   const gfx::Rect result_selection = GetRequestArea();
+ 
+diff --git components/viz/service/display_embedder/output_surface_provider_impl.cc components/viz/service/display_embedder/output_surface_provider_impl.cc
+index 7a1a71fd9b133..0a7018a5d2d39 100644
+--- components/viz/service/display_embedder/output_surface_provider_impl.cc
++++ components/viz/service/display_embedder/output_surface_provider_impl.cc
+@@ -95,14 +95,15 @@ std::unique_ptr<OutputSurface> OutputSurfaceProviderImpl::CreateOutputSurface(
+     return std::make_unique<OutputSurfaceUnified>();
+ #endif
+ 
++  // TODO(penghuang): Merge two output surfaces into one when GLRenderer and
++  // software compositor is removed.
++  std::unique_ptr<OutputSurface> output_surface;
++
+   if (!gpu_compositing) {
+-    return std::make_unique<SoftwareOutputSurface>(
++    output_surface = std::make_unique<SoftwareOutputSurface>(
+         CreateSoftwareOutputDeviceForPlatform(surface_handle, display_client));
+   } else {
+     DCHECK(gpu_dependency);
+-
+-    std::unique_ptr<OutputSurface> output_surface;
+-
+     {
+       gpu::ScopedAllowScheduleGpuTask allow_schedule_gpu_task;
+       output_surface = SkiaOutputSurfaceImpl::Create(
+@@ -128,10 +129,11 @@ std::unique_ptr<OutputSurface> OutputSurfaceProviderImpl::CreateOutputSurface(
+ #elif !BUILDFLAG(IS_ANDROID)
+       gpu_service_impl_->DisableGpuCompositing();
+ #endif
++      return nullptr;
+     }
+-
+-    return output_surface;
+   }
++
++  return output_surface;
+ }
+ 
+ std::unique_ptr<SoftwareOutputDevice>
+diff --git components/viz/test/gl_scaler_test_util.h components/viz/test/gl_scaler_test_util.h
+index 23d5c29851cc6..b60b1c5463cd9 100644
+--- components/viz/test/gl_scaler_test_util.h
++++ components/viz/test/gl_scaler_test_util.h
+@@ -25,7 +25,8 @@ class Rect;
+ 
+ namespace viz {
+ 
+-// A collection of utility functions used in pixel tests.
++// A collection of utility functions used in the GLScaler and GLRenderer-related
++// pixel tests.
+ class GLScalerTestUtil {
+  public:
+   struct ColorBar {
+diff --git docs/gpu/sync_token_internals.md docs/gpu/sync_token_internals.md
+index 280abc71c9426..bc272f880350b 100644
+--- docs/gpu/sync_token_internals.md
++++ docs/gpu/sync_token_internals.md
+@@ -11,7 +11,7 @@ token system.
+ In Chrome, multiple processes, for example browser and renderer, submit work to
+ the GPU process asynchronously in command buffer. However, there are
+ dependencies between the work submitted by different processes, such as
+-SkiaRenderer in the display compositor in the GPU process rendering a tile
++GLRenderer in display compositor in the browser/viz process rendering a tile
+ produced by the raster worker in the renderer process.
+ 
+ Sync tokens are used to synchronize the work contained in command buffers
+diff --git docs/life_of_a_frame.md docs/life_of_a_frame.md
+index fbb60e7c41586..0a8c2085a30df 100644
+--- docs/life_of_a_frame.md
++++ docs/life_of_a_frame.md
+@@ -27,7 +27,7 @@ Commits updates back to Impl thread for activation. Specifically, the main threa
+ Rasterization may occur asynchronously on separate threads, or even another process (OOP-R, or out-of-process rasterization). If rasterization cannot be finished before the deadline for activation, the pipeline will not perform the copying from pending tree to the active tree in step [7], and will instead proceed to step [8] with whatever is already in the active tree.
+ 
+ ### `[7]` Activation
+-Activation is the process of pushing layer trees and properties from the pending tree to the active tree (active_tree_). Note that Impl thread can also directly manipulate the activate tree to reflect updates the impl thread makes in step [2].
++Activation is the process of pushing layer trees and properties from the pending tree to the active tree (active_tree_). Note that Impl thread can also directly manipulate the activate tree to reflect updates the impl thread makes in step [2]. 
+ 
+ ### `[8]` Wait for deadline
+ The deadline for compositor frame submission is provided by the GPU process (Scheduler::BeginImplFrameWithDeadline()).
+@@ -39,7 +39,7 @@ All activated updates will be submitted to the GPU process as a compositor frame
+ After each client submitted CompositorFrame (or signalled that it DidNotProduceFrame) the Display Compositor can proceed with the draw. Note that if the DisplayScheduler hits a deadline it will still draw if any client has submitted a new CompositorFrame, even if it's still waiting on a response for other clients. Before the actual draw could happen SurfaceAggregator will recursively walk over compositor frames and replace SurfaceQuads (quads produced by SurfaceLayer) with contents of the embedded compositor frame. This step produces single CompositorFrame in the end that can be drawn by the Display Compositor.
+ 
+ ### `[11]` Draw Frame
+-During draw Display Compositor will go over quads and render passes in the aggregated compositor frame and produce draw commands. For SkiaRenderer it's recording of Deferred Display Lists (DDL).
++During draw Display Compositor will go over quads and render passes in the aggregated compositor frame and produce draw commands. For GLRenderer it's gl calls recorded by InProcessCommandBuffer and for SkiaRenderer it's recording of Deferred Display Lists (DDL).
+ 
+ ### `[12]` RequestSwap
+ After commands were recorded they will be submitted to the GPU thread to replay along with SwapBuffers request to show the result on screen.
+@@ -51,7 +51,7 @@ When the draw was submitted to GPU Main Thread some of the resources may be not
+ GPU Main Thread does all the GPU work and by the time display compositor is ready to draw it might still be busy doing other tasks (e.g raster for next frame). gpu::Scheduler uses cooperative multi-tasking and can't preempt the current task unless it yields, so the task submitted by the display compositor might have to wait until the current task (and potentially some other high priority tasks) are finished.
+ 
+ ### `[15]` GPU draw
+-Finally tasks that DisplayCompositor posted to GPU Main thread executed and we replay draw commands recorded during Draw Frame [11]. For SkiaRenderer Skia will be replaying DDLs and issue commands to the GPU. This step is when we finally submit the job to the GPU (not GPU thread on CPU).
++Finally tasks that DisplayCompositor posted to GPU Main thread executed and we replay draw commands recorded during Draw Frame [11]. For GLRenderer InProcessCommand buffer will be issuing recorded GL calls, for SkiaRenderer Skia will be replaying DDLs and issue commands to the GPU. This step is when we finally submit the job to the GPU (not GPU thread on CPU).
+ 
+ ### `[16]` Swap
+ The GPU work has been submitted and we signal that we want to present the result (Submits commands to request displaying framebuffer and/or overlays after drawing new content into them). Depending on the platform this step can be blocking or not and take a substantial amount of time (eg. if we have too many queued swaps sometimes this will just block until the next vblank).
+diff --git gpu/command_buffer/client/gl_helper.h gpu/command_buffer/client/gl_helper.h
+index a0c2defeda19b..b0f9c19db8a79 100644
+--- gpu/command_buffer/client/gl_helper.h
++++ gpu/command_buffer/client/gl_helper.h
+@@ -422,8 +422,8 @@ class GPU_EXPORT I420Converter {
+ // and read back a texture from the GPU into CPU-accessible RAM. A single
+ // readback pipeline can handle multiple outstanding readbacks at the same time.
+ //
+-// TODO(crbug.com/870036): DEPRECATED. This will be removed soon in favor of
+-// I420Converter.
++// TODO(crbug.com/870036): DEPRECATED. This will be removed soon, in favor of
++// I420Converter and readback implementation in GLRendererCopier.
+ class GPU_EXPORT ReadbackYUVInterface {
+  public:
+   ReadbackYUVInterface() {}
+diff --git gpu/ipc/gpu_task_scheduler_helper.h gpu/ipc/gpu_task_scheduler_helper.h
+index da4ffce50a0df..fa8f8f8acec07 100644
+--- gpu/ipc/gpu_task_scheduler_helper.h
++++ gpu/ipc/gpu_task_scheduler_helper.h
+@@ -18,6 +18,7 @@ class TimeTicks;
+ }
+ 
+ namespace viz {
++class VizProcessContextProvider;
+ class DisplayCompositorMemoryAndTaskController;
+ }
+ 
+@@ -35,9 +36,10 @@ class InProcessCommandBuffer;
+ // when this class is used outside of actual CommandBuffer, we would need to
+ // make sure the order of post tasks still corresponds to the order that tasks
+ // are posted to the CommandBuffer.
+-// This class is per display compositor. When this is used with SkiaRenderer, it
+-// is created on SkiaOutputSurfaceImpl. Each user of this class would hold a
+-// reference.
++// This class is per display compositor. When this is used with command buffer,
++// it is created on VizProcessContextProvider. When this is used with
++// SkiaRenderer, it is created on SkiaOutputSurfaceImpl. Each user of this class
++// would hold a reference.
+ class GL_IN_PROCESS_CONTEXT_EXPORT GpuTaskSchedulerHelper {
+  public:
+   // This constructor is only used for SkiaOutputSurface.
+@@ -84,6 +86,7 @@ class GL_IN_PROCESS_CONTEXT_EXPORT GpuTaskSchedulerHelper {
+ 
+   friend class gpu::GLInProcessContext;
+   friend class gpu::InProcessCommandBuffer;
++  friend class viz::VizProcessContextProvider;
+   friend class viz::DisplayCompositorMemoryAndTaskController;
+   // Only used for inside CommandBuffer implementation.
+   SingleTaskSequence* GetTaskSequence() const;
+diff --git ui/gfx/swap_result.h ui/gfx/swap_result.h
+index dd407cebb0501..98b9765535e91 100644
+--- ui/gfx/swap_result.h
++++ ui/gfx/swap_result.h
+@@ -41,13 +41,15 @@ struct SwapTimings {
+   // dicontinuities in associated UMA data.
+   base::TimeTicks swap_end;
+ 
+-  // When Display Compositor thread scheduled work to GPU Thread. For
+-  // SkiaRenderer it's PostTask time for FinishPaintRenderPass or SwapBuffers
+-  // whichever comes first.
++  // When Display Compositor thread scheduled work to GPU Thread. For GLRenderer
++  // it's when InProcessCommandBuffer::Flush() happens, for SkiaRenderer it's
++  // PostTask time for FinishPaintRenderPass or SwapBuffers whichever comes
++  // first.
+   base::TimeTicks viz_scheduled_draw;
+ 
+   // When GPU thread started draw submitted by Display Compositor thread. For
+-  // SkiaRenderer it's FinishPaintRenderPass/SwapBuffers.
++  // GLRenderer it's InProcessCommandBuffer::FlushOnGpuThread, for SkiaRenderer
++  // it's FinishPaintRenderPass/SwapBuffers.
+   base::TimeTicks gpu_started_draw;
+ 
+   // When GPU scheduler removed the last required dependency.
+-- 
+2.36.1.windows.1
+
