@@ -1,0 +1,20 @@
+diff --git media/capture/content/video_capture_oracle.cc media/capture/content/video_capture_oracle.cc
+index 43a35d394ee04..9483156d70548 100644
+--- media/capture/content/video_capture_oracle.cc
++++ media/capture/content/video_capture_oracle.cc
+@@ -167,6 +167,15 @@ bool VideoCaptureOracle::ObserveEventAndDecideCapture(
+         if (should_sample) {
+           event_time = content_sampler_.frame_timestamp();
+           duration_of_next_frame_ = content_sampler_.sampling_period();
++        } else {
++          // https://crbug.com/391118566
++          // The content sampler may not sample the frame, if the
++          // `detected_region_` does not match the `damage_rect`. In this case,
++          // the capture may halt up to kNonAnimatingThreshold (250ms) and cause
++          // the video stutter, until it recovers and do another animation
++          // detection. To avoid this, we should use the smoothing sampler as a
++          // fallback to prevent the bad output.
++          should_sample = smoothing_sampler_.ShouldSample();
+         }
+         last_time_animation_was_detected_ = event_time;
+       } else {
