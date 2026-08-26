@@ -155,7 +155,7 @@ index 6665c611f116832b8d441fedf8bc63bbb2ad8359..9fbc02c740cd25016c9822dbcea07443
    base::ObserverList<WebViewObserver> observers_;
  };
 diff --git third_party/blink/renderer/core/frame/local_dom_window.cc third_party/blink/renderer/core/frame/local_dom_window.cc
-index f36ed413289cb86d701ff38ea975e5cad4f70032..d2be006943c37bd78b725e7dda89af3741cba5ce 100644
+index 22771edd0624ced5031083baa478e8ccfc02fafa..73708de21c0b3afa0f1d6cf687ec1d6919314e37 100644
 --- third_party/blink/renderer/core/frame/local_dom_window.cc
 +++ third_party/blink/renderer/core/frame/local_dom_window.cc
 @@ -51,6 +51,7 @@
@@ -174,7 +174,7 @@ index f36ed413289cb86d701ff38ea975e5cad4f70032..d2be006943c37bd78b725e7dda89af37
  #include "third_party/blink/renderer/core/html/custom/custom_element_registry.h"
  #include "third_party/blink/renderer/core/html/fenced_frame/fence.h"
  #include "third_party/blink/renderer/core/html/forms/form_controller.h"
-@@ -1984,8 +1986,9 @@ void LocalDOMWindow::moveBy(int x, int y) const {
+@@ -1985,8 +1987,9 @@ void LocalDOMWindow::moveBy(int x, int y) const {
      return;
    }
  
@@ -185,7 +185,7 @@ index f36ed413289cb86d701ff38ea975e5cad4f70032..d2be006943c37bd78b725e7dda89af37
  
    LocalFrame* frame = GetFrame();
    Page* page = frame->GetPage();
-@@ -2005,8 +2008,9 @@ void LocalDOMWindow::moveTo(int x, int y) const {
+@@ -2006,8 +2009,9 @@ void LocalDOMWindow::moveTo(int x, int y) const {
      return;
    }
  
@@ -196,7 +196,7 @@ index f36ed413289cb86d701ff38ea975e5cad4f70032..d2be006943c37bd78b725e7dda89af37
  
    LocalFrame* frame = GetFrame();
    Page* page = frame->GetPage();
-@@ -2029,7 +2033,8 @@ void LocalDOMWindow::resizeBy(int x,
+@@ -2030,7 +2034,8 @@ void LocalDOMWindow::resizeBy(int x,
    }
  
    if (IsPictureInPictureWindow()) {
@@ -206,7 +206,7 @@ index f36ed413289cb86d701ff38ea975e5cad4f70032..d2be006943c37bd78b725e7dda89af37
        exception_state.ThrowDOMException(
            DOMExceptionCode::kNotAllowedError,
            "resizeBy() requires user activation in document picture-in-picture");
-@@ -2057,7 +2062,8 @@ void LocalDOMWindow::resizeTo(int width,
+@@ -2058,7 +2063,8 @@ void LocalDOMWindow::resizeTo(int width,
    }
  
    if (IsPictureInPictureWindow()) {
@@ -216,7 +216,7 @@ index f36ed413289cb86d701ff38ea975e5cad4f70032..d2be006943c37bd78b725e7dda89af37
        exception_state.ThrowDOMException(
            DOMExceptionCode::kNotAllowedError,
            "resizeTo() requires user activation in document picture-in-picture");
-@@ -2499,6 +2505,12 @@ DOMWindow* LocalDOMWindow::openPictureInPictureWindow(
+@@ -2501,6 +2507,12 @@ DOMWindow* LocalDOMWindow::openPictureInPictureWindow(
        To<LocalDOMWindow>(result.frame->DomWindow());
    pip_dom_window->SetIsPictureInPictureWindow();
  
@@ -230,10 +230,10 @@ index f36ed413289cb86d701ff38ea975e5cad4f70032..d2be006943c37bd78b725e7dda89af37
    pip_dom_window->document()->SetCompatibilityMode(
        entered_window->document()->GetCompatibilityMode());
 diff --git third_party/blink/renderer/core/frame/local_dom_window.h third_party/blink/renderer/core/frame/local_dom_window.h
-index 0f25d444cddd0865b4a2bdd14e573ab925b420ef..3fbcfd2b9e4d2dcb6726604a8cf094784ad02ff0 100644
+index 8d3b6b5a4b3134032426bf187d437698c47f993e..d45653335ad78128456f314cd02edbb3e3b0ab6d 100644
 --- third_party/blink/renderer/core/frame/local_dom_window.h
 +++ third_party/blink/renderer/core/frame/local_dom_window.h
-@@ -625,6 +625,11 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
+@@ -632,6 +632,11 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
  
    void SetIsPictureInPictureWindow();
  
@@ -245,7 +245,7 @@ index 0f25d444cddd0865b4a2bdd14e573ab925b420ef..3fbcfd2b9e4d2dcb6726604a8cf09478
    // Return the viewport size including scrollbars.
    gfx::Size GetViewportSize() const;
  
-@@ -733,6 +738,8 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
+@@ -740,6 +745,8 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
    // https://wicg.github.io/document-picture-in-picture/
    bool is_picture_in_picture_window_ = false;
  

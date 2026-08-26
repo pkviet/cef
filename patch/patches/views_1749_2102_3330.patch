@@ -1,5 +1,5 @@
 diff --git chrome/browser/ui/views/toolbar/app_menu.cc chrome/browser/ui/views/toolbar/app_menu.cc
-index 89d9a7b54f1421b812b8e91534e9b014da1ccd6f..2a12411ffabc4355ea0215218191e547926d7c1b 100644
+index 6900c2bab12d3b69c7ce2159b0d46c45066daec8..d82712588a2079429b1bf0e5cd57b6e5d2221e7e 100644
 --- chrome/browser/ui/views/toolbar/app_menu.cc
 +++ chrome/browser/ui/views/toolbar/app_menu.cc
 @@ -1089,12 +1089,14 @@ void AppMenu::RunMenu(views::MenuButtonController* host) {
